@@ -9,7 +9,10 @@ async function heroState(page) {
     const car = rect('#hero-car'), photo = rect('#hero-car img'), overlay = rect('.car-lights');
     const dock = document.querySelector('.dock');
     const usableBottom = dock && getComputedStyle(dock).display !== 'none' ? dock.getBoundingClientRect().top : innerHeight;
-    const fits = (selector) => { const bounds = rect(selector); return bounds.top >= -1 && bounds.bottom <= usableBottom + 1; };
+    const fits = (selector) => {
+      const element = document.querySelector(selector), bounds = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return bounds.width > 0 && bounds.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && bounds.top >= -1 && bounds.bottom <= usableBottom + 1;
+    };
     const row = document.querySelector('.hero-specialism');
     const marques = [...row.querySelectorAll('.marque')];
     const image = document.querySelector('#hero-car img');
@@ -18,17 +21,17 @@ async function heroState(page) {
       imageAndLightsAligned: ['x', 'y', 'width', 'height'].every((key) => Math.abs(photo[key] - overlay[key]) < 0.5),
       titleVisible: fits('.hero h1'), bookingVisible: fits('.hero a[href="#book"]'),
       contactVisible: fits('.hero a[href^="https://wa.me/"]'), marquesVisible: fits('.hero-specialism'),
-      carBodyAndLampsVisible: car.top >= 0 && car.top + car.height * 0.85 <= usableBottom + 1,
+      carBodyAndLampsVisible: car.width > 0 && car.height > 0 && car.top >= 0 && car.top + car.height * 0.85 <= usableBottom + 1,
       namesCorrect: marques.map((marque) => marque.querySelector('span').textContent).join(' · ') === 'Audi · Volkswagen · Porsche',
       logosLoaded: marques.length === 3 && marques.every((marque) => {
         const logo = marque.querySelector('img'); return logo.complete && logo.naturalWidth > 0 && logo.alt === '';
       }),
       logosBesideNames: marques.every((marque) => {
         const logo = marque.querySelector('img').getBoundingClientRect(), name = marque.querySelector('span').getBoundingClientRect();
-        return logo.right <= name.left + 1 && Math.abs((logo.top + logo.bottom - name.top - name.bottom) / 2) < 1;
+        return logo.width > 0 && logo.height > 0 && name.width > 0 && name.height > 0 && logo.right <= name.left + 1 && Math.abs((logo.top + logo.bottom - name.top - name.bottom) / 2) < 1;
       }),
       orderIsLeftToRight: getComputedStyle(row).direction === 'ltr' && marques.every((marque, index) => index === 0 || marque.getBoundingClientRect().left > marques[index - 1].getBoundingClientRect().right),
-      rowFits: row.scrollWidth <= row.clientWidth + 1 && row.getBoundingClientRect().left >= -1 && row.getBoundingClientRect().right <= innerWidth + 1,
+      rowFits: row.getBoundingClientRect().width > 0 && row.getBoundingClientRect().height > 0 && row.scrollWidth <= row.clientWidth + 1 && row.getBoundingClientRect().left >= -1 && row.getBoundingClientRect().right <= innerWidth + 1,
       contactLinkCorrect: document.querySelector('.hero a[href^="https://wa.me/"]').href.startsWith('https://wa.me/962795866455?text='),
       carBodyBottom: car.top + car.height * 0.85, usableBottom
     };

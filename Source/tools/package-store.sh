@@ -58,7 +58,7 @@ UP_ZIP="$WORK/$SLUG-hostinger-upload.zip"
 echo "4/7 source ZIP"
 S="$WORK/stage/$NAME"
 mkdir -p "$S/Source/tools" "$S/Source/assets" "$S/Documents"
-for f in "${RUNTIME[@]}" README-AR.md MAINTENANCE-AR.md ASSET-SOURCES.md tools/package-store.sh tools/delivery-README-AR.md; do cp "$SOURCE/$f" "$S/Source/$f"; done
+for f in "${RUNTIME[@]}" README-AR.md MAINTENANCE-AR.md ASSET-SOURCES.md tools/package-store.sh tools/build-pages.sh tools/delivery-README-AR.md; do cp "$SOURCE/$f" "$S/Source/$f"; done
 # The optional full-size image master stays local; runtime images are sufficient to rebuild.
 if [ -f "$SOURCE/assets/coupe-studio-master.png" ]; then cp "$SOURCE/assets/coupe-studio-master.png" "$S/Source/assets/"; fi
 if [ -d "$SOURCE/tests" ]; then
