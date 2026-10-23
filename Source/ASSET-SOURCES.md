@@ -37,9 +37,9 @@
 
 | الملف المحلي | المصدر والملف الأصلي | النوع والعرض |
 |---|---|---|
-| `assets/audi-rings.svg` | [Audi](https://www.audi.com/en) — [ملف الحلقات](https://static.audi.com/assets/images/frontend/rings18-2GJCA2FU.svg)، المشار إليه كشعار المؤسسة في بيانات الصفحة. | SVG أسود بإطار 52×18، دون فلاتر أو إعادة تلوين؛ يظهر على مسند فاتح. |
-| `assets/volkswagen-emblem.svg` | [Volkswagen Newsroom](https://www.volkswagen-newsroom.com/en) — [ملف الشعار](https://assets.vw-mms.de/assets/images/favicons/safari-pinned-tab-VGNAEFIT.svg)، المشار إليه بوسم `mask-icon` في رأس الصفحة. | SVG أسود مربع، بألوان المصدر دون فلاتر، مع الحفاظ على نسبته فوق مسند فاتح. |
-| `assets/porsche-crest.png` | [Porsche Design System، مكوّن Crest](https://designsystem.porsche.com/v3/components/crest/configurator/) — [الصورة الأصلية 3x](https://cdn.ui.porsche.com/porsche-design-system/crest/porsche-crest.18d6f02@3x.png). | PNG ملون وشفاف، 90×120. يُعرض بدرع المصدر وألوانه ونسبته الأصلية. |
+| `assets/audi-rings.svg` | [Audi](https://www.audi.com/en) — [ملف الحلقات](https://static.audi.com/assets/images/frontend/rings18-2GJCA2FU.svg)، المشار إليه كشعار المؤسسة في بيانات الصفحة. | SVG بحلقات كروم ثلاثية الأبعاد بتدرج معدني أصلي (`#ffffff` إلى `#516071`) وظل ناعم دون فلاتر لونية. |
+| `assets/volkswagen-emblem.svg` | [Volkswagen Newsroom](https://www.volkswagen-newsroom.com/en) — [ملف الشعار](https://assets.vw-mms.de/assets/images/favicons/safari-pinned-tab-VGNAEFIT.svg). | SVG أصلي بقاعدة دائرية زرقاء ملكية ثلاثية الأبعاد بتدرج شعاعي مع أحرف V وW بإنهاء كروم معدني أصيل. |
+| `assets/porsche-crest.png` | [Porsche Design System، مكوّن Crest](https://designsystem.porsche.com/v3/components/crest/configurator/) — [الصورة الأصلية 3x](https://cdn.ui.porsche.com/porsche-design-system/crest/porsche-crest.18d6f02@3x.png). | PNG ملون وشفاف، 90×120. يُعرض بدرع المصدر وألوانه ونسبته الأصلية الكاملة مع ظل ناعم ثلاثي الأبعاد. |
 
 ترتيب السطر هو Audi ثم Volkswagen ثم Porsche، بأسماء إنجليزية في اللغتين. الاسم المكتوب بجانب الصورة يوفر التسمية؛ لذلك `alt` للصورة فارغ لتجنب التكرار.
 

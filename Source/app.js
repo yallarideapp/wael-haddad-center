@@ -381,9 +381,9 @@
           <a class="btn btn-ghost btn-lg" href="${waLink(shopWa(), tr('مرحبا، بدي أستفسر عن صيانة سيارتي', 'Hello, I’d like to ask about servicing my car'))}" target="_blank" rel="noopener">${icon('wa')}${tr('تواصل معنا', 'Message us')}</a>
         </div>
         <ul class="hero-specialism" dir="ltr" aria-label="${tr('ماركات المركبات', 'Vehicle brands')}">
-          <li class="marque marque-audi"><img src="assets/audi-rings.svg" width="52" height="18" alt=""><span>Audi</span></li>
-          <li class="marque marque-vw"><img src="assets/volkswagen-emblem.svg" width="26" height="26" alt=""><span>Volkswagen</span></li>
-          <li class="marque marque-porsche"><img src="assets/porsche-crest.png" width="24" height="32" alt=""><span>Porsche</span></li>
+          <li class="marque marque-audi"><img src="assets/audi-rings.svg?v=20261024-clean" width="52" height="18" alt=""><span>Audi</span></li>
+          <li class="marque marque-vw"><img src="assets/volkswagen-emblem.svg?v=20261024-clean" width="26" height="26" alt=""><span>Volkswagen</span></li>
+          <li class="marque marque-porsche"><img src="assets/porsche-crest.png?v=20261024-clean" width="24" height="32" alt=""><span>Porsche</span></li>
         </ul>
       </div>
       ${heroCar()}

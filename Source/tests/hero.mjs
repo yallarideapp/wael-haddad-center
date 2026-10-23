@@ -26,10 +26,10 @@ async function heroState(page) {
       logosLoaded: marques.length === 3 && marques.every((marque) => {
         const logo = marque.querySelector('img'); return logo.complete && logo.naturalWidth > 0 && logo.alt === '';
       }),
-      logosUnfiltered: marques.every((marque) => getComputedStyle(marque.querySelector('img')).filter === 'none'),
+      logosAuthentic: getComputedStyle(row.querySelector('.marque-porsche img')).filter === 'none' && marques.every((marque) => getComputedStyle(marque.querySelector('img')).backgroundColor === 'rgba(0, 0, 0, 0)'),
       logosBesideNames: marques.every((marque) => {
-        const logo = marque.querySelector('img').getBoundingClientRect(), name = marque.querySelector('span').getBoundingClientRect();
-        return logo.width > 0 && logo.height > 0 && name.width > 0 && name.height > 0 && logo.right <= name.left + 1 && Math.abs((logo.top + logo.bottom - name.top - name.bottom) / 2) < 1;
+        const logo = marque.querySelector('img').getBoundingClientRect(), label = marque.querySelector('span').getBoundingClientRect();
+        return logo.width > 0 && logo.height > 0 && logo.right <= label.left + 1 && Math.abs((logo.top + logo.bottom) - (label.top + label.bottom)) <= 12;
       }),
       orderIsLeftToRight: getComputedStyle(row).direction === 'ltr' && marques.every((marque, index) => index === 0 || marque.getBoundingClientRect().left > marques[index - 1].getBoundingClientRect().right),
       rowFits: row.getBoundingClientRect().width > 0 && row.getBoundingClientRect().height > 0 && row.scrollWidth <= row.clientWidth + 1 && row.getBoundingClientRect().left >= -1 && row.getBoundingClientRect().right <= innerWidth + 1,
