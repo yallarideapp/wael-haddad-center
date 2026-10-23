@@ -131,8 +131,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .hero .btn-ghost:hover{border-color:var(--hero-btn);background:#ecd9be0d}
 .hero .btn-lg{min-height:52px;font-size:15px;padding-inline:24px}
 .hero-visual{position:relative;min-width:0;direction:ltr}
-.hero-car{position:relative;aspect-ratio:1672/941;width:100%;isolation:isolate;mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)}
-.hero-car::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,var(--hero-bg),transparent 10%,transparent 90%,var(--hero-bg)),linear-gradient(0deg,var(--hero-bg),transparent 20%,transparent 86%,var(--hero-bg))}
+.hero-car{position:relative;aspect-ratio:1672/941;width:100%;isolation:isolate}
 .hero-car img{width:100%;height:100%;max-width:none}
 .car-lights{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .lamp-stroke{stroke:#f0f8ff;stroke-width:4.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0}
