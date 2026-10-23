@@ -22,7 +22,7 @@
 
 | الملف | الوصف |
 |---|---|
-| `assets/coupe-studio.webp` | صورة توضيحية خاصة للواجهة، 1672×941، لكوبيه فحمية بطابع 2016، بحلقات Audi وشارة RS5 داخل الشبك. |
+| `assets/coupe-studio.webp` | صورة توضيحية خاصة للواجهة، 1672×941، لكوبيه فحمية بطابع 2016، بحلقات Audi وشارة RS5 داخل الشبك، وخلفية استوديو بنية وأرضية بيج. |
 | `assets/coupe-studio-mobile.webp` | النسخة المحسّنة للموبايل، 840×473، بالكادر نفسه. |
 | `assets/favicon.svg` | علامة WH المرسومة للموقع. |
 | رسومات تقرير الفحص داخل `app.js` | رسومات خطية توضيحية؛ يظهر وصف «رسم توضيحي» عند استخدامها بدلاً من صورة مرفوعة. |
@@ -37,7 +37,7 @@
 
 | الملف المحلي | المصدر والملف الأصلي | النوع والعرض |
 |---|---|---|
-| `assets/audi-rings.svg` | [Audi](https://www.audi.com/en) — [ملف الحلقات](https://static.audi.com/assets/images/frontend/rings18-2GJCA2FU.svg)، المشار إليه كشعار المؤسسة في بيانات الصفحة. | SVG، بإطار 52×18. تعرض CSS الشكل باللون الأبيض على الخلفية الفحمية. |
+| `assets/audi-rings.svg` | [Audi](https://www.audi.com/en) — [ملف الحلقات](https://static.audi.com/assets/images/frontend/rings18-2GJCA2FU.svg)، المشار إليه كشعار المؤسسة في بيانات الصفحة. | SVG، بإطار 52×18. تعرض CSS الشكل باللون الأبيض على الخلفية البنية. |
 | `assets/volkswagen-emblem.svg` | [Volkswagen Newsroom](https://www.volkswagen-newsroom.com/en) — [ملف الشعار](https://assets.vw-mms.de/assets/images/favicons/safari-pinned-tab-VGNAEFIT.svg)، المشار إليه بوسم `mask-icon` في رأس الصفحة. | SVG مربع. تعرض CSS الشكل باللون الأبيض مع الحفاظ على نسبته. |
 | `assets/porsche-crest.png` | [Porsche Design System، مكوّن Crest](https://designsystem.porsche.com/v3/components/crest/configurator/) — [الصورة الأصلية 3x](https://cdn.ui.porsche.com/porsche-design-system/crest/porsche-crest.18d6f02@3x.png). | PNG ملون وشفاف، 90×120. يُعرض بدرع المصدر وألوانه ونسبته الأصلية. |
 
