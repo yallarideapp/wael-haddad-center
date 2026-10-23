@@ -182,7 +182,7 @@
     if (heroObserver) { heroObserver.disconnect(); heroObserver = null; }
   };
   const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let heroLightsPlayed = false;
+  let heroLightsPlayed = false, heroIntroPlayed = false;
 
   function heroCar() {
     const state = heroLightsPlayed || reduceMotion() ? 'lights-on' : 'lights-pending';
@@ -356,6 +356,8 @@
       </div>`;
   }
   function viewHome() {
+    const introClass = heroIntroPlayed ? '' : ' hero-intro';
+    heroIntroPlayed = true;
     const st = S.settings;
     const o = st.offer;
     const services = S.services.filter((s) => !s.hidden && (s.id !== 'winter' || o.on));
@@ -369,7 +371,7 @@
     const quotes = D.quotes.map((q) => `<blockquote class="quote" lang="ar" dir="rtl"><p>${esc(q.text)}</p><footer>${esc(q.who)} · ${tr('تعليق على فيسبوك', 'Facebook comment')}</footer></blockquote>`).join('');
     const hours = L(st, 'hours');
     return `
-    <section class="hero"><div class="wrap hero-grid">
+    <section class="hero${introClass}"><div class="wrap hero-grid">
       <div class="hero-copy">
         <p class="eyebrow">${tr('البيادر · المنطقة الصناعية', 'Al-Bayader · Industrial Area')} — ${tr('منذ', 'since')}&nbsp;<span class="mono">${esc(st.since)}</span></p>
         <h1 class="display">${esc(shopName())}<span class="h1-sub">${esc(L(st, 'tagline'))}</span></h1>
