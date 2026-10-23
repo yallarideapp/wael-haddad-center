@@ -46,7 +46,7 @@ await suite.run(async (browser) => {
   let releasePhoto, photoRequested;
   const photoGate = new Promise((resolveGate) => { releasePhoto = resolveGate; });
   const requestSeen = new Promise((resolveSeen) => { photoRequested = resolveSeen; });
-  await page.route('**/assets/coupe-*.webp', async (route) => { photoRequested(); await photoGate; await route.continue(); });
+  await page.route('**/assets/coupe-*.webp*', async (route) => { photoRequested(); await photoGate; await route.continue(); });
   try {
     await navigate(page, suite.url());
     await Promise.race([requestSeen, new Promise((_, reject) => setTimeout(() => reject(new Error('Car photo was not requested.')), 5000))]);

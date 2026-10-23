@@ -191,7 +191,7 @@
     const far = 'M125 431 L113 463 Q112 470 123 473 M148 459 L174 463 L191 448';
     return `<div class="hero-visual" aria-hidden="true">
       <div class="hero-car ${state}" id="hero-car">
-        <img src="assets/coupe-studio.webp" srcset="assets/coupe-studio-mobile.webp 840w, assets/coupe-studio.webp 1672w" sizes="(max-width: 760px) 100vw, 62vw" width="1672" height="941" alt="" fetchpriority="high" decoding="async">
+        <img src="assets/coupe-studio.webp?v=20261023-cutout" srcset="assets/coupe-studio-mobile.webp?v=20261023-cutout 840w, assets/coupe-studio.webp?v=20261023-cutout 1672w" sizes="(max-width: 760px) 100vw, 62vw" width="1672" height="941" alt="" fetchpriority="high" decoding="async">
         <svg class="car-lights" viewBox="0 0 1672 941" fill="none" focusable="false">
           <defs><filter id="lamp-halo" x="-30%" y="-100%" width="160%" height="300%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="8"/></filter></defs>
           <g class="lamp lamp-far"><path class="lamp-glow" d="${far}"/><path class="lamp-stroke" pathLength="1" d="${far}"/></g>
