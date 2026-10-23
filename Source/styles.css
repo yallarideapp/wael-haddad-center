@@ -1,13 +1,14 @@
 /* Wael Haddad Center
-   Layout concept: a workshop service manual. Cool steel paper, graphite ink, hairline spec tables,
+   Layout concept: a workshop service manual. Sand paper, walnut ink, hairline spec tables,
    one signal red for the brand and live states. Plex for Arabic, mono for plates, km and JOD. */
 :root{
-  --bg:#ECEEF0; --surface:#FFFFFF; --sunk:#E2E5E8; --ink:#14181C; --muted:#56606A; --line:#D2D7DC; --line-strong:#A9B1B9;
-  --accent:#C0161D; --accent-soft:#F7E3E3; --accent-ink:#FFFFFF;
-  --btn:#14181C; --btn-ink:#FFFFFF; --btn-hover:#2A3036;
+  --bg:#F0E6D8; --surface:#FBF6EE; --sunk:#E5D5C1; --ink:#33251D; --muted:#6D594A; --line:#D8C6B0; --line-strong:#9C7D5E;
+  --accent:#AE2824; --accent-soft:#F5DDD0; --accent-ink:#FFFFFF;
+  --btn:#493021; --btn-ink:#FFF6E9; --btn-hover:#60412E;
   --ok:#1D7349; --ok-bg:#E1F1E8; --warn:#8F5A00; --warn-bg:#FAEED6; --stop:#B3261E; --stop-bg:#FBE3E1;
-  --plate-bg:#FFFFFF; --plate-ink:#101214; --plate-edge:#1B1F23; --plate-strip:#E9ECEF;
-  --shadow:0 1px 0 rgba(20,24,28,.04),0 12px 32px -18px rgba(20,24,28,.28);
+  --plate-bg:#FFFCF6; --plate-ink:#292018; --plate-edge:#49382A; --plate-strip:#EDE0CF;
+  --shadow:0 1px 0 rgba(51,37,29,.04),0 12px 32px -18px rgba(66,43,27,.28);
+  --hero-bg:#302118; --hero-ink:#FFF6E9; --hero-muted:#D3BCA3; --hero-line:#A88A6A; --hero-btn:#ECD9BE;
   --f-display:'IBM Plex Sans Arabic',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;
   --f-body:'IBM Plex Sans Arabic',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;
   --f-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,'IBM Plex Sans Arabic',monospace;
@@ -15,22 +16,22 @@
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --bg:#0E1114; --surface:#161A1E; --sunk:#1D2227; --ink:#E5E8EB; --muted:#9AA4AE; --line:#2A3138; --line-strong:#434C55;
-    --accent:#EE4B52; --accent-soft:#3A1719; --accent-ink:#FFFFFF;
-    --btn:#E5E8EB; --btn-ink:#0E1114; --btn-hover:#C9CED3;
+    --bg:#241B16; --surface:#30241C; --sunk:#3B2C22; --ink:#F5EBDD; --muted:#C9B49D; --line:#594333; --line-strong:#A08366;
+    --accent:#F07B70; --accent-soft:#4B2920; --accent-ink:#281B15;
+    --btn:#E8D2B5; --btn-ink:#302118; --btn-hover:#F7E7D0;
     --ok:#5FC690; --ok-bg:#12271C; --warn:#E3AE52; --warn-bg:#2B2213; --stop:#F27B73; --stop-bg:#301716;
-    --plate-bg:#F4F5F6; --plate-ink:#101214; --plate-edge:#000000; --plate-strip:#DADFE3;
-    --shadow:0 1px 0 rgba(0,0,0,.3),0 16px 40px -20px rgba(0,0,0,.8);
+    --plate-bg:#FBF4E7; --plate-ink:#292018; --plate-edge:#8A6C50; --plate-strip:#E5D5BF;
+    --shadow:0 1px 0 rgba(20,12,7,.3),0 16px 40px -20px rgba(20,12,7,.8);
     color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
-  --bg:#0E1114; --surface:#161A1E; --sunk:#1D2227; --ink:#E5E8EB; --muted:#9AA4AE; --line:#2A3138; --line-strong:#434C55;
-  --accent:#EE4B52; --accent-soft:#3A1719; --accent-ink:#FFFFFF;
-  --btn:#E5E8EB; --btn-ink:#0E1114; --btn-hover:#C9CED3;
+  --bg:#241B16; --surface:#30241C; --sunk:#3B2C22; --ink:#F5EBDD; --muted:#C9B49D; --line:#594333; --line-strong:#A08366;
+  --accent:#F07B70; --accent-soft:#4B2920; --accent-ink:#281B15;
+  --btn:#E8D2B5; --btn-ink:#302118; --btn-hover:#F7E7D0;
   --ok:#5FC690; --ok-bg:#12271C; --warn:#E3AE52; --warn-bg:#2B2213; --stop:#F27B73; --stop-bg:#301716;
-  --plate-bg:#F4F5F6; --plate-ink:#101214; --plate-edge:#000000; --plate-strip:#DADFE3;
-  --shadow:0 1px 0 rgba(0,0,0,.3),0 16px 40px -20px rgba(0,0,0,.8);
+  --plate-bg:#FBF4E7; --plate-ink:#292018; --plate-edge:#8A6C50; --plate-strip:#E5D5BF;
+  --shadow:0 1px 0 rgba(20,12,7,.3),0 16px 40px -20px rgba(20,12,7,.8);
   color-scheme:dark;
 }
 
@@ -66,7 +67,7 @@ html[dir=rtl] .display,html[dir=rtl] .brand-name b,html[dir=rtl] .sec-head h2,ht
 .btn-red:hover{filter:brightness(1.08)}
 .btn-ghost{background:transparent;border-color:var(--line-strong);color:var(--ink)}
 .btn-ghost:hover{border-color:var(--ink)}
-.btn-wa{background:#1F8F4E;color:#fff}
+.btn-wa{background:#1C7B44;color:#fff}
 .btn-wa:hover{background:#18763F}
 .btn-sm{min-height:36px;padding:0 12px;font-size:14px}
 .btn-lg{min-height:58px;font-size:17px;padding:0 26px}
@@ -111,27 +112,27 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 }
 
 /* A quiet studio, with the lamp geometry aligned to the photograph. */
-.hero{padding-block:62px 44px;border-bottom:1px solid #2b2e32;background:#101113;color:#f4f5f6;overflow:hidden}
+.hero{padding-block:62px 44px;border-bottom:1px solid #674B35;background:var(--hero-bg);color:var(--hero-ink);overflow:hidden}
 .hero-grid{max-width:1440px;padding-inline:48px;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr);gap:10px;align-items:center;min-height:440px}
 .hero-copy{position:relative;z-index:1;padding-block:12px 28px}
 .eyebrow{font-size:13px;color:var(--muted);display:flex;gap:4px 8px;align-items:center;flex-wrap:wrap}
 .eyebrow .mono{margin-inline-start:-4px}
 .eyebrow::before{content:"";width:22px;height:2px;background:var(--accent)}
-.hero .eyebrow{color:#a6abb2;font-size:12px}
+.hero .eyebrow{color:var(--hero-muted);font-size:12px}
 .hero .eyebrow::before{background:#d52b35;width:28px}
 .hero h1{margin-top:22px;font-size:clamp(34px,3.6vw,52px);line-height:1.3;font-weight:500;letter-spacing:-.025em}
-.hero h1 .h1-sub{display:block;font-size:.48em;color:#b2b7bf;font-weight:400;margin-top:6px;letter-spacing:0}
-.hero .lead{margin-top:26px;font-size:15px;max-width:29em;color:#a6abb2;line-height:1.85}
-.hero .lead b{display:block;font-weight:500;font-size:19px;color:#e2e5e9;margin-bottom:5px}
+.hero h1 .h1-sub{display:block;font-size:.48em;color:var(--hero-muted);font-weight:400;margin-top:6px;letter-spacing:0}
+.hero .lead{margin-top:26px;font-size:15px;max-width:29em;color:var(--hero-muted);line-height:1.85}
+.hero .lead b{display:block;font-weight:500;font-size:19px;color:var(--hero-ink);margin-bottom:5px}
 .hero .lead span{display:block}
-.hero .btn-primary{background:#f2f3f5;color:#14171b}
-.hero .btn-primary:hover{background:#fff}
-.hero .btn-ghost{border-color:#555a62;color:#f2f3f5}
-.hero .btn-ghost:hover{border-color:#b2b7bf;background:#ffffff08}
+.hero .btn-primary{background:var(--hero-btn);color:var(--hero-bg)}
+.hero .btn-primary:hover{background:#FFF1DA}
+.hero .btn-ghost{border-color:var(--hero-line);color:var(--hero-ink)}
+.hero .btn-ghost:hover{border-color:var(--hero-btn);background:#ecd9be0d}
 .hero .btn-lg{min-height:52px;font-size:15px;padding-inline:24px}
 .hero-visual{position:relative;min-width:0;direction:ltr}
 .hero-car{position:relative;aspect-ratio:1672/941;width:100%;isolation:isolate;mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)}
-.hero-car::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(0deg,#101113,transparent 20%,transparent 86%,#101113)}
+.hero-car::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,var(--hero-bg),transparent 10%,transparent 90%,var(--hero-bg)),linear-gradient(0deg,var(--hero-bg),transparent 20%,transparent 86%,var(--hero-bg))}
 .hero-car img{width:100%;height:100%;max-width:none}
 .car-lights{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .lamp-stroke{stroke:#f0f8ff;stroke-width:4.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0}
@@ -143,7 +144,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .lights-starting .lamp-far .lamp-glow{animation-delay:.24s;animation-duration:1.25s}
 @keyframes lamp-trace{from{stroke-dashoffset:1;opacity:.12}to{stroke-dashoffset:0;opacity:1}}
 @keyframes lamp-warm{0%,12%{opacity:0}100%{opacity:.65}}
-.hero-specialism{list-style:none;display:flex;align-items:center;gap:clamp(10px,1.6vw,22px);padding:0;margin:26px 0 0;color:#e3e6ea;font-family:var(--f-body);font-size:clamp(15.5px,1.4vw,19px);font-weight:500;line-height:1.65}
+.hero-specialism{list-style:none;display:flex;align-items:center;gap:clamp(10px,1.6vw,22px);padding:0;margin:26px 0 0;color:var(--hero-ink);font-family:var(--f-body);font-size:clamp(15.5px,1.4vw,19px);font-weight:500;line-height:1.65}
 html[dir=rtl] .hero-specialism{justify-content:flex-end}
 .marque{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .marque img{flex:none;object-fit:contain}
@@ -219,7 +220,7 @@ html[dir=rtl] .hero-specialism{justify-content:flex-end}
 .plate-field{display:flex;align-items:stretch;background:var(--plate-bg);border:2.5px solid var(--plate-edge);border-radius:7px;overflow:hidden;min-height:52px;direction:ltr}
 .plate-field .strip{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 8px;background:var(--plate-strip);border-inline-end:2px solid var(--plate-edge);font-size:9px;line-height:1.25;font-weight:700;color:var(--plate-ink);text-align:center;letter-spacing:.04em}
 .plate-field input{flex:1;min-width:0;border:0;background:transparent;color:var(--plate-ink);font-family:var(--f-mono);font-weight:600;font-size:24px;letter-spacing:.06em;text-align:center;padding:0 8px}
-.plate-field input::placeholder{color:#8A9299;font-weight:500}
+.plate-field input::placeholder{color:#806C58;font-weight:500}
 .plate-field input:focus{outline:none}
 .plate-field:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 45%,transparent)}
 .plate{display:inline-flex;align-items:center;gap:0;background:var(--plate-bg);color:var(--plate-ink);border:2px solid var(--plate-edge);border-radius:5px;font-family:var(--f-mono);font-weight:600;font-size:15px;letter-spacing:.05em;direction:ltr;overflow:hidden;white-space:nowrap}
