@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const WIDTH = 1672, PHOTO_HEIGHT = 941, HEADROOM = 80, HEIGHT = PHOTO_HEIGHT + HEADROOM;
-  const CAMERA = { focal: 2000, x: 836, y: 300, normal: [0, -.970, -.243], distance: -1 };
+  const CAMERA = { focal: 2000, x: 836, y: 300, normal: [-.08, -.967, -.241], distance: -1 };
   const add = (a, b) => a.map((v, i) => v + b[i]);
   const sub = (a, b) => a.map((v, i) => v - b[i]);
   const scale = (a, n) => a.map((v) => v * n);
@@ -29,7 +29,9 @@
     return scale(ray, (CAMERA.distance + crown) / dot(CAMERA.normal, ray));
   }
   function surface(u, v) {
-    return lift(photoPoint(u, v), .025 * Math.sin(Math.PI*u) * Math.sin(Math.PI*v));
+    // Keep the perimeter on the photo's seam plane; only the panel's centre is crowned.
+    const crown = .025 * Math.sin(Math.PI * u) * Math.sin(Math.PI * v);
+    return lift(photoPoint(u, v), crown);
   }
   function surfaceNormal(u, v) {
     const delta = .0005;
@@ -42,8 +44,9 @@
     const p = sub(point, HINGE), c = Math.cos(angle), s = Math.sin(angle);
     return add(HINGE, add(add(scale(p,c), scale(cross(AXIS,p),s)), scale(AXIS,dot(AXIS,p)*(1-c))));
   }
-  // Leave headroom for the raised bonnet rather than shortening its opening.
-  const OPENING = 65 * Math.PI / 180;
+  // Use the requested opening angle around the two actual photographed hinges.
+  // Screen-space CSS angles from another crop cannot replace this shared 3D axis.
+  const OPENING = 34 * Math.PI / 180;
   const VERTEX = `
     attribute vec3 a_position;
     attribute vec3 a_normal;
@@ -82,11 +85,12 @@
         color=texture2D(u_texture,v_uv).rgb;
       } else if (u_material<1.5) {
         vec4 paint=texture2D(u_texture,v_uv);
-        color=mix(vec3(.105,.11,.115),paint.rgb,paint.a)*(.84+.16*diffuse);
+        vec3 base=mix(vec3(.07,.075,.08),paint.rgb*.48,paint.a);
+        color=base*(.74+.26*diffuse);
       } else {
         vec3 view=normalize(-v_position);
         float shine=pow(max(0.0,dot(normal,normalize(light+view))),20.0);
-        color=u_color*(.65+.35*diffuse)+vec3(.07)*shine;
+        color=u_color*(.65+.35*diffuse)+vec3(.05)*shine;
       }
       gl_FragColor=vec4(color,1.0);
     }`;
@@ -192,21 +196,26 @@
       gl.viewport(0,0,WIDTH,HEIGHT); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.clearColor(0,0,0,0);
       function render(openness) {
         if(stopped || gl.isContextLost()) return;
-        const value=Math.max(0,Math.min(1,Number(openness)||0));
+        const value=Math.max(-.4/34,Math.min(1,Number(openness)||0));
         if(last===value) return;
         last=value;
         const angle=-OPENING*value;
         gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-        const lower=lift([858,374],-.07), upper=rotate(surface(.94,.64),angle);
-        const length=Math.hypot(...sub(upper,lower)), joint=mix(lower,upper,Math.min(.85,.25/length));
         if(value>.07) {
-          cylinder(lower,joint,.009,cylinderMesh); cylinder(joint,upper,.0033,pistonMesh);
           gl.disable(gl.CULL_FACE);
-          draw(cylinderMesh,2,null,[.065,.07,.075],0); draw(pistonMesh,2,null,[.55,.59,.62],0);
+          for(const [fender,u,v,rCyl,rRod] of [
+            [[312,344],.05,.48,.0075,.0028],
+            [[948,336],.96,.44,.0085,.0032]
+          ]) {
+            const lower=lift(fender,-.055), upper=rotate(surface(u,v),angle);
+            const length=Math.hypot(...sub(upper,lower)), joint=mix(lower,upper,Math.min(.85,.22/length));
+            cylinder(lower,joint,rCyl,cylinderMesh); cylinder(joint,upper,rRod,pistonMesh);
+            draw(cylinderMesh,2,null,[.06,.065,.07],0); draw(pistonMesh,2,null,[.42,.45,.48],0);
+          }
         }
         gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); gl.frontFace(gl.CCW);
         draw(topMesh,0,topTexture,null,angle); draw(underMesh,1,underTexture,null,angle);
-        gl.disable(gl.CULL_FACE); draw(rimMesh,2,null,[.20,.21,.22],angle);
+        gl.disable(gl.CULL_FACE); draw(rimMesh,2,null,[.12,.13,.14],angle);
       }
       return { render, destroy };
     } catch (_) { destroy(); return null; }

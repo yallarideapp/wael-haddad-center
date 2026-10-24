@@ -200,7 +200,7 @@
             <defs><clipPath id="hood-outline"><path d="${hood}"/></clipPath></defs>
             <g class="engine-bay" clip-path="url(#hood-outline)">
               <path d="${hood}" fill="#111213"/>
-              <image href="assets/engine-bay.webp?v=20261024-hood" x="110" y="290" width="920" height="170"/>
+              <image href="assets/engine-bay.webp?v=20261024-hood-hinge" x="110" y="290" width="920" height="170"/>
             </g>
           </svg>
           <canvas class="hood-mesh" width="1672" height="1021"></canvas>
@@ -222,7 +222,8 @@
   function positionHood(car, openness) {
     if (!heroRenderer) return;
     heroRenderer.render(openness);
-    $('.engine-bay', car).style.opacity = String(Math.min(1, openness / .045));
+    // The panel hides the bay first; fade only the final sliver at the latch.
+    $('.engine-bay', car).style.opacity = Math.max(0, Math.min(1, openness * 34 / 1.5));
     car.dataset.hoodOpen = openness.toFixed(3);
   }
   function startHeroLights() {
@@ -246,19 +247,23 @@
       };
       if (!engineReady) { illuminate(); return; }
       let elapsed = 0, previous;
-      // Monotone angle profile estimated from the clip; body/camera motion is excluded.
-      const closing = [1, .96, .80, .61, .43, .27, .13, .04, 0];
-      const slopes = closing.map((value, i) => {
-        if (!i || i === closing.length - 1) return 0;
-        const before = value - closing[i - 1], after = closing[i + 1] - value;
-        return 2 * before * after / (before + after);
-      });
+      // Match cubic-bezier(.25,1,.35,1) between the supplied angular keyframes.
+      // Every frame, including the tiny latch settle, uses the same fixed hinge axis.
+      const ease = (progress) => {
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 16; i++) {
+          const t = (lo + hi) / 2, q = 1 - t;
+          const x = 3*q*q*t*.25 + 3*q*t*t*.35 + t*t*t;
+          if (x < progress) lo = t; else hi = t;
+        }
+        return 1 - Math.pow(1 - (lo + hi) / 2, 3);
+      };
       const closeAt = (progress) => {
-        const step = Math.min(progress * (closing.length - 1), closing.length - 1);
-        const i = Math.min(Math.floor(step), closing.length - 2), t = step - i;
-        const t2 = t*t, t3 = t2*t;
-        return (2*t3-3*t2+1)*closing[i] + (t3-2*t2+t)*slopes[i]
-          + (-2*t3+3*t2)*closing[i+1] + (t3-t2)*slopes[i+1];
+        const keys = [[0,34],[.78,1.5],[.88,-.4],[1,0]];
+        const end = keys.findIndex(([time]) => time > progress);
+        if (end < 1) return 0;
+        const [from, a] = keys[end-1], [to, b] = keys[end];
+        return (a + (b-a)*ease((progress-from)/(to-from))) / 34;
       };
       const animate = (now) => {
         if (!car.isConnected) return;
@@ -266,9 +271,9 @@
         if (previous !== undefined && !document.hidden) elapsed += Math.min(now - previous, 80);
         previous = now;
         let openness = 1;
-        if (elapsed < 2000) car.dataset.phase = 'open';
-        else if (elapsed < 4000) { car.dataset.phase = 'closing'; openness = closeAt((elapsed - 2000) / 2000); }
-        else if (elapsed < 4200) {
+        if (elapsed < 350) car.dataset.phase = 'open';
+        else if (elapsed < 1550) { car.dataset.phase = 'closing'; openness = closeAt((elapsed - 350) / 1200); }
+        else if (elapsed < 1670) {
           car.dataset.phase = 'closing'; car.dataset.hoodOpen = '0';
           $('.car-hood', car).style.opacity = '0';
           if (heroRenderer) { heroRenderer.destroy(); heroRenderer = null; }
@@ -304,7 +309,7 @@
       heroObserver.observe(car);
     };
     const img = $('img', car);
-    const engine = new Image(); engine.src = 'assets/engine-bay.webp?v=20261024-hood';
+    const engine = new Image(); engine.src = 'assets/engine-bay.webp?v=20261024-hood-hinge';
     const underside = new Image(); underside.src = 'assets/hood-underside.webp?v=20261024-hood-rig';
     // Decode both textures before moving the hood. A missing engine asset falls back to lights only.
     const photoReady = img.decode ? img.decode().then(() => true, () => Boolean(img.naturalWidth)) : new Promise((resolve) => {
