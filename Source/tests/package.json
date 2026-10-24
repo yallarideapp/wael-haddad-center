@@ -7,10 +7,11 @@
   },
   "scripts": {
     "serve": "node serve.mjs",
-    "test": "node smoke.mjs && node flows.mjs && node hero.mjs",
+    "test": "node smoke.mjs && node flows.mjs && node hero.mjs && node hood.mjs",
     "test:smoke": "node smoke.mjs",
     "test:flows": "node flows.mjs",
-    "test:hero": "node hero.mjs"
+    "test:hero": "node hero.mjs",
+    "test:hood": "node hood.mjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"

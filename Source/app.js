@@ -176,10 +176,11 @@
     };
     try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
   }
-  let timers = [], heroObserver = null;
+  let timers = [], heroObserver = null, heroFrame = 0;
   const clearTimers = () => {
     timers.forEach((t) => clearInterval(t)); timers = [];
     if (heroObserver) { heroObserver.disconnect(); heroObserver = null; }
+    cancelAnimationFrame(heroFrame); heroFrame = 0;
   };
   const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let heroLightsPlayed = false, heroIntroPlayed = false;
@@ -189,9 +190,28 @@
     // Image and light paths share one coordinate system, including at mobile sizes.
     const near = 'M640 451 L654 467 Q658 470 669 469 L762 465 M786 488 L813 483 Q827 480 834 464 L846 439';
     const far = 'M125 431 L113 463 Q112 470 123 473 M148 459 L174 463 L191 448';
+    const hood = 'M129 411 C176 355 323 316 490 307 C656 298 870 306 1006 319 C874 325 719 368 579 437 C443 423 275 433 129 411Z';
+    const hoodPhoto = window.innerWidth <= 760 ? 'coupe-studio-mobile.webp' : 'coupe-studio.webp';
     return `<div class="hero-visual" aria-hidden="true">
       <div class="hero-car ${state}" id="hero-car">
         <img src="assets/coupe-studio.webp?v=20261023-cutout" srcset="assets/coupe-studio-mobile.webp?v=20261023-cutout 840w, assets/coupe-studio.webp?v=20261023-cutout 1672w" sizes="(max-width: 760px) 100vw, 62vw" width="1672" height="941" alt="" fetchpriority="high" decoding="async">
+        <svg class="car-hood" viewBox="0 0 1672 941" fill="none" focusable="false">
+          <defs>
+            <clipPath id="hood-outline"><path d="${hood}"/></clipPath>
+            <linearGradient id="hood-undercoat" x1="490" y1="307" x2="460" y2="442" gradientUnits="userSpaceOnUse"><stop stop-color="#101112"/><stop offset=".42" stop-color="#35383B"/><stop offset="1" stop-color="#17191B"/></linearGradient>
+          </defs>
+          <g class="engine-bay" clip-path="url(#hood-outline)">
+            <path d="${hood}" fill="#111213"/>
+            <image href="assets/engine-bay.webp?v=20261024-hood" x="110" y="290" width="920" height="170"/>
+          </g>
+          <g class="hood-panel">
+            <image class="hood-top-image" href="assets/${hoodPhoto}?v=20261023-cutout" width="1672" height="941" preserveAspectRatio="none" clip-path="url(#hood-outline)"/>
+            <g class="hood-underside">
+              <path d="${hood}" fill="url(#hood-undercoat)" stroke="#777B7E" stroke-width="2"/>
+              <g clip-path="url(#hood-outline)"><g transform="matrix(.97617185 .03571846 1.02461037 -.53589377 -302.87959206 454.01734095)"><image href="assets/hood-underside.webp?v=20261024-hood" x="270" y="75" width="760" height="255" preserveAspectRatio="none"/></g></g>
+            </g>
+          </g>
+        </svg>
         <svg class="car-lights" viewBox="0 0 1672 941" fill="none" focusable="false">
           <defs><filter id="lamp-halo" x="-30%" y="-100%" width="160%" height="300%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="8"/></filter></defs>
           <g class="lamp lamp-far"><path class="lamp-glow" d="${far}"/><path class="lamp-stroke" pathLength="1" d="${far}"/></g>
@@ -200,16 +220,63 @@
       </div>
     </div>`;
   }
+  function settleHero(car) {
+    if (!car) return;
+    car.className = 'hero-car lights-on'; car.dataset.phase = 'complete';
+    $('.car-hood', car).style.opacity = '0'; car.dataset.hoodOpen = '0';
+    $('.hood-panel', car).removeAttribute('transform');
+  }
+  // Rotate the photographed hood around its rear hinge in the shared image coordinates.
+  // The projection keeps both hinge endpoints fixed; the rest of the car never moves.
+  function hoodMatrix(angle) {
+    const vx = -395 * Math.cos(angle), vy = 112 * Math.cos(angle) - 300 * Math.sin(angle), det = 62532;
+    const a = (57792 - 12 * vx) / det, b = (1344 - 12 * vy) / det;
+    const c = (203820 + 516 * vx) / det, d = (4740 + 516 * vy) / det;
+    return `matrix(${a} ${b} ${c} ${d} ${490 - a * 490 - c * 307} ${307 - b * 490 - d * 307})`;
+  }
   function startHeroLights() {
     const car = $('#hero-car'); if (!car) return;
     if (heroLightsPlayed || reduceMotion()) {
-      car.className = 'hero-car lights-on'; heroLightsPlayed = true; return;
+      settleHero(car); heroLightsPlayed = true; return;
     }
+    let engineReady = false;
     const start = () => {
       if (!car.isConnected) return;
       if (heroObserver) { heroObserver.disconnect(); heroObserver = null; }
       heroLightsPlayed = true;
-      car.classList.replace('lights-pending', 'lights-starting');
+      const illuminate = () => {
+        $('.car-hood', car).style.opacity = '0';
+        car.dataset.phase = 'lights';
+        car.classList.replace('lights-pending', 'lights-starting');
+        const lamp = $('.lamp-near .lamp-stroke', car);
+        lamp.addEventListener('animationend', () => { if (car.isConnected) settleHero(car); }, { once: true });
+        timers.push(setTimeout(() => { if (car.isConnected) settleHero(car); }, 1900));
+      };
+      if (!engineReady) { illuminate(); return; }
+      const overlay = $('.car-hood', car), panel = $('.hood-panel', car), bay = $('.engine-bay', car), underside = $('.hood-underside', car);
+      $('.hood-top-image', car).setAttribute('href', $('img', car).currentSrc);
+      overlay.style.opacity = '1';
+      let elapsed = 0, previous;
+      const ease = (t) => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const animate = (now) => {
+        if (!car.isConnected) return;
+        if (reduceMotion()) { settleHero(car); return; }
+        if (previous !== undefined && !document.hidden) elapsed += Math.min(now - previous, 80);
+        previous = now;
+        let openness = 0;
+        if (elapsed < 300) car.dataset.phase = 'waiting';
+        else if (elapsed < 1600) { car.dataset.phase = 'opening'; openness = ease((elapsed - 300) / 1300); }
+        else if (elapsed < 2250) { car.dataset.phase = 'open'; openness = 1; }
+        else if (elapsed < 3500) { car.dataset.phase = 'closing'; openness = 1 - ease((elapsed - 2250) / 1250); }
+        else { heroFrame = 0; illuminate(); return; }
+        const angle = openness * 1.117;
+        panel.setAttribute('transform', hoodMatrix(angle));
+        bay.style.opacity = String(Math.min(1, angle / .06));
+        underside.style.opacity = String(Math.max(0, Math.min(1, (angle - .25) / .16)));
+        car.dataset.hoodOpen = openness.toFixed(3);
+        heroFrame = requestAnimationFrame(animate);
+      };
+      heroFrame = requestAnimationFrame(animate);
     };
     const ready = () => {
       if (!car.isConnected) return;
@@ -220,10 +287,18 @@
       heroObserver.observe(car);
     };
     const img = $('img', car);
-    // The short sequence starts after the photo is decoded, never over an empty frame.
-    if (img.decode) img.decode().then(ready, () => { if (img.naturalWidth) ready(); });
-    else if (img.complete && img.naturalWidth) ready();
-    else img.addEventListener('load', ready, { once: true });
+    const engine = new Image(); engine.src = 'assets/engine-bay.webp?v=20261024-hood';
+    const underside = new Image(); underside.src = 'assets/hood-underside.webp?v=20261024-hood';
+    // Decode both textures before moving the hood. A missing engine asset falls back to lights only.
+    const photoReady = img.decode ? img.decode().then(() => true, () => Boolean(img.naturalWidth)) : new Promise((resolve) => {
+      if (img.complete) resolve(Boolean(img.naturalWidth));
+      else { img.onload = () => resolve(true); img.onerror = () => resolve(false); }
+    });
+    const decodeTexture = (image) => image.decode ? image.decode().then(() => true, () => false) : new Promise((resolve) => {
+      if (image.complete) resolve(Boolean(image.naturalWidth));
+      else { image.onload = () => resolve(true); image.onerror = () => resolve(false); }
+    });
+    Promise.all([photoReady, decodeTexture(engine), decodeTexture(underside)]).then(([photo, bay, panel]) => { engineReady = bay && panel; if (photo) ready(); });
   }
 
   /* ---------- transient UI state ---------- */
