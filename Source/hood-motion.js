@@ -1,13 +1,19 @@
-/* Draw the supplied car footage without simulating or deforming its bonnet. */
+/* Draw transparent frames of the supplied footage without deforming its bonnet. */
 (() => {
   'use strict';
 
-  function create({ canvas, video, onPhase, onError }) {
+  function create({ canvas, video, frames, onPhase, onError }) {
+    if (!frames || !Array.isArray(frames.sources) || !frames.sources.length ||
+        !frames.sources.every((source) => typeof source === 'string' && source.length > 0) ||
+        !['width', 'height', 'columns', 'perSheet', 'count'].every((key) => Number.isInteger(frames[key]) && frames[key] > 0) ||
+        !Number.isFinite(frames.fps) || frames.fps <= 0 ||
+        frames.perSheet % frames.columns !== 0 ||
+        frames.sources.length !== Math.ceil(frames.count / frames.perSheet)) return null;
     let context;
-    try { context = canvas?.getContext('2d', { alpha: false }); } catch (_) { return null; }
+    try { context = canvas?.getContext('2d', { alpha: true }); } catch (_) { return null; }
     if (!context || !video) return null;
 
-    const timeouts = new Set(), listeners = [], pending = new Set();
+    const timeouts = new Set(), listeners = [], pending = new Set(), atlases = [];
     const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     let stopped = false, failed = false, prepared = false, requested = false;
     let closing = false, finishing = false, complete = false, preparing;
@@ -36,24 +42,39 @@
       timeouts.forEach(clearTimeout); timeouts.clear(); hold = 0;
       pending.forEach((cancel) => cancel()); pending.clear();
     };
+    const releaseAtlases = () => {
+      atlases.forEach((atlas) => {
+        atlas.onload = null; atlas.onerror = null;
+        atlas.removeAttribute('src');
+      });
+      atlases.length = 0;
+    };
     const phase = (name) => { if (!stopped && !failed) onPhase?.(name); };
     const fail = () => {
       if (stopped || failed || complete) return;
       failed = true; playAttempt++; resume = false;
       video.pause(); cancelWork();
+      releaseAtlases();
       onError?.();
     };
     const paint = (mediaTime = video.currentTime) => {
-      if (stopped || failed || video.readyState < 2 || !video.videoWidth) return false;
+      if (stopped || failed || video.readyState < 2 || !video.videoWidth || !Number.isFinite(mediaTime)) return false;
       try {
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const index = Math.max(0, Math.min(frames.count - 1, Math.floor(mediaTime * frames.fps + .05)));
+        const atlas = atlases[Math.floor(index / frames.perSheet)], cell = index % frames.perSheet;
+        if (!atlas?.naturalWidth) return false;
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(atlas, (cell % frames.columns) * frames.width,
+          Math.floor(cell / frames.columns) * frames.height, frames.width, frames.height,
+          0, 0, canvas.width, canvas.height);
         canvas.dataset.mediaTime = Number(mediaTime).toFixed(4);
+        canvas.dataset.frameIndex = String(index);
         return true;
       } catch (_) { return false; }
     };
 
-    // At ended, the decoded image is already the last frame. Read it directly:
-    // a redundant seek on a non-seekable response can jump back to the start.
+    // Video supplies the playback clock; each timestamp selects a transparent frame.
+    // A redundant seek on a non-seekable response can jump back to the start.
     // The seeked path is only needed if completion precedes the ended state.
     const freezeLastFrame = () => {
       const target = Math.max(0, video.duration - 1 / 24);
@@ -102,7 +123,9 @@
       video.pause(); cancelFrame();
       if (!await freezeLastFrame()) { if (!stopped) fail(); return; }
       if (stopped || failed) return;
-      complete = true; phase('complete');
+      complete = true;
+      // drawImage has copied the final pixels; release decoded sheets on mobile.
+      releaseAtlases(); phase('complete');
     };
     const drawFrames = () => {
       if (stopped || failed || finishing || complete || document.hidden || video.paused) return;
@@ -170,28 +193,50 @@
         if (stopped || failed || preference?.matches) { resolve(false); return; }
         const source = video.dataset.src || video.getAttribute('src');
         if (!source) { resolve(false); return; }
-        let settled = false;
+        let settled = false, videoReady = false, decoded = 0;
         const remove = () => {
           video.removeEventListener('loadeddata', loaded);
           video.removeEventListener('error', error);
+          atlases.forEach((atlas) => { atlas.onload = null; atlas.onerror = null; });
           clearLater(timeout); pending.delete(cancel);
         };
         const finish = (ok) => {
           if (settled) return;
-          settled = true; remove(); resolve(ok);
+          settled = true; remove();
+          if (!ok) releaseAtlases();
+          resolve(ok);
         };
         const cancel = () => finish(false);
         const error = () => finish(false);
-        const loaded = () => {
-          if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.videoWidth || !video.videoHeight) { finish(false); return; }
-          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        const ready = () => {
+          if (settled || stopped || failed || !videoReady || decoded !== frames.sources.length) return;
+          canvas.width = frames.width; canvas.height = frames.height;
           if (!paint()) { finish(false); return; }
           prepared = true; phase('open'); finish(true); scheduleHold();
+        };
+        const loaded = () => {
+          if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.videoWidth || !video.videoHeight) { finish(false); return; }
+          videoReady = true; ready();
         };
         const timeout = later(() => finish(false), 10000);
         pending.add(cancel);
         video.addEventListener('loadeddata', loaded);
         video.addEventListener('error', error);
+        frames.sources.forEach((source, index) => {
+          const atlas = new Image(); atlases[index] = atlas; atlas.decoding = 'async';
+          atlas.onerror = error;
+          atlas.onload = () => {
+            const afterDecode = () => {
+              if (settled || stopped || failed) return;
+              if (atlas.naturalWidth !== frames.width * frames.columns ||
+                  atlas.naturalHeight !== frames.height * Math.ceil(frames.perSheet / frames.columns)) { finish(false); return; }
+              decoded++; ready();
+            };
+            if (atlas.decode) atlas.decode().then(afterDecode, error);
+            else afterDecode();
+          };
+          atlas.src = source;
+        });
         video.muted = true; video.defaultMuted = true;
         video.playsInline = true; video.loop = false; video.preload = 'auto';
         try { video.src = source; video.load(); } catch (_) { finish(false); }
@@ -206,6 +251,7 @@
       if (stopped) return;
       stopped = true; playAttempt++; resume = false;
       cancelWork(); listeners.forEach((remove) => remove());
+      releaseAtlases();
       video.pause(); video.removeAttribute('src');
       try { video.load(); } catch (_) { /* The static final poster remains available. */ }
     };

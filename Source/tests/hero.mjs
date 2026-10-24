@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { createSuite, horizontalOverflow, navigate, newContext, waitForFonts, waitForSteadyLights } from './helpers.mjs';
 
 const suite = createSuite('hero');
+const isMotionAsset = (url) => /\/assets\/car-hood-(?:animation\.mp4|frames-\d\.webp)/.test(url);
 
 async function heroState(page) {
   return page.evaluate(() => {
@@ -16,11 +17,14 @@ async function heroState(page) {
     const row = document.querySelector('.hero-specialism');
     const marques = [...row.querySelectorAll('.marque')];
     const image = document.querySelector('.rs5-poster');
-    const source = document.querySelector('.rs5-source');
+    const source = document.querySelector('.rs5-source'), canvasElement = document.querySelector('#rs5HeroCanvas');
+    const stageStyle = getComputedStyle(document.querySelector('#hero-car'));
     return {
-      posterLoaded: image.complete && image.naturalWidth === 720 && image.naturalHeight === 400,
+      posterLoaded: image.complete && image.naturalWidth === 1080 && image.naturalHeight === 600,
+      canvasHasHighResolution: canvasElement.width === 1080 && canvasElement.height === 600,
       posterAndCanvasAligned: ['x', 'y', 'width', 'height'].every((key) => Math.abs(poster[key] - canvas[key]) < .5),
       stageHasVideoAspect: Math.abs(car.width / car.height - 1.8) < .005 && car.width <= 520.5,
+      stageHasNoMaskOrMatte: stageStyle.maskImage === 'none' && stageStyle.backgroundImage === 'none' && stageStyle.backgroundColor === 'rgba(0, 0, 0, 0)',
       sourceIsInlineMuted: source.muted && source.playsInline && source.getAttribute('data-src').includes('assets/car-hood-animation.mp4'),
       titleVisible: fits('.hero h1'), bookingVisible: fits('.hero a[href="#book"]'),
       contactVisible: fits('.hero a[href^="https://wa.me/"]'), marquesVisible: fits('.hero-specialism'),
@@ -49,8 +53,9 @@ await suite.run(async (browser) => {
   let releaseVideo, videoRequested;
   const videoGate = new Promise((resolveGate) => { releaseVideo = resolveGate; });
   const requestSeen = new Promise((resolveSeen) => { videoRequested = resolveSeen; });
-  let videoRequests = 0;
-  await page.route('**/assets/car-hood-animation.mp4*', async (route) => { videoRequests++; videoRequested(); await videoGate; await route.continue(); });
+  let motionRequests = 0;
+  page.on('request', (request) => { if (isMotionAsset(request.url())) motionRequests++; });
+  await page.route('**/assets/car-hood-animation.mp4*', async (route) => { videoRequested(); await videoGate; await route.continue(); });
   try {
     await navigate(page, suite.url());
     await Promise.race([requestSeen, new Promise((_, reject) => setTimeout(() => reject(new Error('Hood video was not requested.')), 5000))]);
@@ -72,22 +77,22 @@ await suite.run(async (browser) => {
     const textSamples = await page.evaluate(() => window.testTextSamples);
     suite.check('main heading fades into a readable final state', textSamples.some((sample) => sample.opacity < .8) && textSamples.some((sample) => sample.opacity > .99), textSamples);
     suite.check('metallic light travels across the heading', new Set(textSamples.map((sample) => sample.sheen)).size > 2);
-    suite.check('photographic sequence finishes with a decoded and visible final frame', await page.locator('#hero-car').evaluate((car) => {
-      const video = car.querySelector('.rs5-source');
-      return car.dataset.phase === 'complete' && car.classList.contains('lights-on') && car.dataset.frame === 'video' && video.videoWidth === 720 && video.videoHeight === 400 && video.paused;
+    suite.check('photographic sequence finishes with the high-resolution final RGBA frame', await page.locator('#hero-car').evaluate((car) => {
+      const video = car.querySelector('.rs5-source'), canvas = car.querySelector('#rs5HeroCanvas');
+      return car.dataset.phase === 'complete' && car.classList.contains('lights-on') && car.dataset.frame === 'video' && video.videoWidth === 720 && video.videoHeight === 400 && video.paused && canvas.width === 1080 && canvas.height === 600 && Number(canvas.dataset.frameIndex) === 47;
     }));
     await waitForFonts(page);
     suite.check('desktop booking is visible immediately', (await heroState(page)).bookingVisible);
-    const requestsBeforeRerender = videoRequests;
+    const requestsBeforeRerender = motionRequests;
     await page.click('[data-act="lang"]');
     await waitForSteadyLights(page);
     suite.check('language rerender does not replay the text introduction', await page.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && Number(getComputedStyle(title).opacity) === 1));
-    suite.check('switching language uses the steady final photograph without loading video again', videoRequests === requestsBeforeRerender && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
+    suite.check('switching language uses the steady final photograph without loading motion assets again', motionRequests === requestsBeforeRerender && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
     await page.click('.hero a[href="#book"]');
     await page.waitForSelector('[data-form="book"]');
     await page.evaluate(() => { location.hash = ''; });
     await waitForSteadyLights(page);
-    suite.check('returning from booking keeps the final photograph without replay', videoRequests === requestsBeforeRerender && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
+    suite.check('returning from booking keeps the final photograph without replay', motionRequests === requestsBeforeRerender && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
   } finally {
     releaseVideo();
     await desktop.close();
@@ -137,12 +142,12 @@ await suite.run(async (browser) => {
   try {
     const reducedPage = await reduced.newPage();
     suite.watch(reducedPage, 'reduced motion');
-    let videoRequests = 0;
-    reducedPage.on('request', (request) => { if (request.url().includes('/assets/car-hood-animation.mp4')) videoRequests++; });
+    let motionRequests = 0;
+    reducedPage.on('request', (request) => { if (isMotionAsset(request.url())) motionRequests++; });
     await navigate(reducedPage, suite.url());
     await waitForSteadyLights(reducedPage);
     suite.check('reduced motion keeps text visible without fade or sheen', await reducedPage.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && Number(getComputedStyle(title).opacity) === 1));
-    suite.check('reduced motion shows the final lit photograph without loading video', videoRequests === 0 && await reducedPage.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
+    suite.check('reduced motion shows the final lit photograph without loading video or atlases', motionRequests === 0 && await reducedPage.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
     await reducedPage.screenshot({ path: resolve(suite.output, 'reduced-motion-phone.png') });
   } finally { await reduced.close(); }
 });
