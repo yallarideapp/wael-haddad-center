@@ -186,7 +186,7 @@
   let heroLightsPlayed = false, heroIntroPlayed = false;
 
   function heroCar() {
-    const state = heroLightsPlayed || reduceMotion() ? 'lights-on' : 'lights-pending';
+    const state = heroLightsPlayed || reduceMotion() ? 'lights-on' : 'lights-pending hood-loading';
     // Image and light paths share one coordinate system, including at mobile sizes.
     const near = 'M640 451 L654 467 Q658 470 669 469 L762 465 M786 488 L813 483 Q827 480 834 464 L846 439';
     const far = 'M125 431 L113 463 Q112 470 123 473 M148 459 L174 463 L191 448';
@@ -195,23 +195,23 @@
     return `<div class="hero-visual" aria-hidden="true">
       <div class="hero-car ${state}" id="hero-car">
         <img src="assets/coupe-studio.webp?v=20261023-cutout" srcset="assets/coupe-studio-mobile.webp?v=20261023-cutout 840w, assets/coupe-studio.webp?v=20261023-cutout 1672w" sizes="(max-width: 760px) 100vw, 62vw" width="1672" height="941" alt="" fetchpriority="high" decoding="async">
-        <svg class="car-hood" viewBox="0 0 1672 941" fill="none" focusable="false">
-          <defs>
-            <clipPath id="hood-outline"><path d="${hood}"/></clipPath>
-            <linearGradient id="hood-undercoat" x1="490" y1="307" x2="460" y2="442" gradientUnits="userSpaceOnUse"><stop stop-color="#101112"/><stop offset=".42" stop-color="#35383B"/><stop offset="1" stop-color="#17191B"/></linearGradient>
-          </defs>
-          <g class="engine-bay" clip-path="url(#hood-outline)">
-            <path d="${hood}" fill="#111213"/>
-            <image href="assets/engine-bay.webp?v=20261024-hood" x="110" y="290" width="920" height="170"/>
-          </g>
-          <g class="hood-panel">
-            <image class="hood-top-image" href="assets/${hoodPhoto}?v=20261023-cutout" width="1672" height="941" preserveAspectRatio="none" clip-path="url(#hood-outline)"/>
-            <g class="hood-underside">
-              <path d="${hood}" fill="url(#hood-undercoat)" stroke="#777B7E" stroke-width="2"/>
-              <g clip-path="url(#hood-outline)"><g transform="matrix(.97617185 .03571846 1.02461037 -.53589377 -302.87959206 454.01734095)"><image href="assets/hood-underside.webp?v=20261024-hood" x="270" y="75" width="760" height="255" preserveAspectRatio="none"/></g></g>
+        <div class="car-hood">
+          <svg class="hood-engine" viewBox="0 0 1672 941" fill="none" focusable="false">
+            <defs><clipPath id="hood-outline"><path d="${hood}"/></clipPath></defs>
+            <g class="engine-bay" clip-path="url(#hood-outline)">
+              <path d="${hood}" fill="#111213"/>
+              <image href="assets/engine-bay.webp?v=20261024-hood" x="110" y="290" width="920" height="170"/>
             </g>
-          </g>
-        </svg>
+            <g class="hood-struts" stroke-linecap="round">
+              <path class="strut-body" stroke="#181B1E" stroke-width="7"/>
+              <path class="strut-rod" stroke="#969CA1" stroke-width="2.5"/>
+            </g>
+          </svg>
+          <div class="hood-panel">
+            <div class="hood-top" style="clip-path:path('${hood}')"><img class="hood-top-image" src="assets/${hoodPhoto}?v=20261023-cutout" width="1672" height="941" alt=""></div>
+            <img class="hood-underside" src="assets/hood-underside.webp?v=20261024-hood-natural" width="1000" height="600" alt="">
+          </div>
+        </div>
         <svg class="car-lights" viewBox="0 0 1672 941" fill="none" focusable="false">
           <defs><filter id="lamp-halo" x="-30%" y="-100%" width="160%" height="300%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="8"/></filter></defs>
           <g class="lamp lamp-far"><path class="lamp-glow" d="${far}"/><path class="lamp-stroke" pathLength="1" d="${far}"/></g>
@@ -224,15 +224,62 @@
     if (!car) return;
     car.className = 'hero-car lights-on'; car.dataset.phase = 'complete';
     $('.car-hood', car).style.opacity = '0'; car.dataset.hoodOpen = '0';
-    $('.hood-panel', car).removeAttribute('transform');
+    $('.hood-panel', car).removeAttribute('style');
   }
-  // Rotate the photographed hood around its rear hinge in the shared image coordinates.
-  // The projection keeps both hinge endpoints fixed; the rest of the car never moves.
-  function hoodMatrix(angle) {
-    const vx = -395 * Math.cos(angle), vy = 112 * Math.cos(angle) - 300 * Math.sin(angle), det = 62532;
-    const a = (57792 - 12 * vx) / det, b = (1344 - 12 * vy) / det;
-    const c = (203820 + 516 * vx) / det, d = (4740 + 516 * vy) / det;
-    return `matrix(${a} ${b} ${c} ${d} ${490 - a * 490 - c * 307} ${307 - b * 490 - d * 307})`;
+  // Project the complete photographed panel, including its curved alpha edge.
+  // Four-point mapping preserves perspective instead of stretching a cropped inset.
+  function hoodProjection(source, target) {
+    const rows = source.flatMap(([x, y], i) => {
+      const [u, v] = target[i];
+      return [[x,y,1,0,0,0,-u*x,-u*y,u], [0,0,0,x,y,1,-v*x,-v*y,v]];
+    });
+    for (let col = 0; col < 8; col++) {
+      let pivot = col;
+      for (let row = col + 1; row < 8; row++) if (Math.abs(rows[row][col]) > Math.abs(rows[pivot][col])) pivot = row;
+      [rows[col], rows[pivot]] = [rows[pivot], rows[col]];
+      const divisor = rows[col][col];
+      for (let j = col; j <= 8; j++) rows[col][j] /= divisor;
+      for (let row = 0; row < 8; row++) if (row !== col) {
+        const factor = rows[row][col];
+        for (let j = col; j <= 8; j++) rows[row][j] -= factor * rows[col][j];
+      }
+    }
+    return [...rows.map((row) => row[8]), 1];
+  }
+  const hoodCorners = [[129,411],[579,437],[1006,319],[490,307]];
+  const hoodUV = [[0,1],[1,1],[1,0],[0,0]];
+  const hoodPlane = hoodProjection(hoodUV, hoodCorners);
+  const hoodUnproject = hoodProjection(hoodCorners, hoodUV);
+  const hoodTextureUV = [1/1000,0,0,0,-1/600,1,0,0,1];
+  const multiplyPlane = (a, b) => a.map((_, i) => {
+    const row = Math.floor(i/3)*3, col = i%3;
+    return a[row]*b[col] + a[row+1]*b[col+3] + a[row+2]*b[col+6];
+  });
+  const planeCSS = ([a,b,c,d,e,f,g,h,i]) => `matrix3d(${a},${d},0,${g},${b},${e},0,${h},0,0,1,0,${c},${f},0,${i})`;
+  function positionHood(car, openness) {
+    const angle = openness * Math.PI / 3, c = Math.cos(angle), s = Math.sin(angle);
+    // Rotate one shared plane, so all four corners become edge-on together.
+    const pose = [...hoodPlane];
+    pose[1] *= c; pose[4] = pose[4]*c - 360*s; pose[7] *= c;
+    const point = (u, v) => {
+      const depth = pose[6]*u + pose[7]*v + 1;
+      return [(pose[0]*u + pose[1]*v + pose[2])/depth, (pose[3]*u + pose[4]*v + pose[5])/depth];
+    };
+    const far = point(0, 1);
+    const panel = $('.hood-panel', car), top = $('.hood-top', car), underside = $('.hood-underside', car);
+    panel.style.transform = `scale(${car.clientWidth / 1672})`;
+    top.style.transform = planeCSS(multiplyPlane(pose, hoodUnproject));
+    underside.style.transform = planeCSS(multiplyPlane(pose, hoodTextureUV));
+    // Swap faces only as the rigid panel crosses edge-on to the camera.
+    const below = 516 * (far[1] - 307) - 12 * (far[0] - 490) < 0;
+    top.style.display = below ? 'none' : 'block';
+    underside.style.display = below ? 'block' : 'none';
+    $('.engine-bay', car).style.opacity = String(Math.min(1, angle / .04));
+    const left = point(.06, .48), right = point(.94, .48);
+    const rods = `M380 355L${left.join(' ')} M850 375L${right.join(' ')}`;
+    $$('.hood-struts path', car).forEach((path) => path.setAttribute('d', rods));
+    $('.hood-struts', car).style.opacity = below ? '1' : '0';
+    car.dataset.hoodOpen = openness.toFixed(3);
   }
   function startHeroLights() {
     const car = $('#hero-car'); if (!car) return;
@@ -246,6 +293,7 @@
       heroLightsPlayed = true;
       const illuminate = () => {
         $('.car-hood', car).style.opacity = '0';
+        car.classList.remove('hood-loading'); car.dataset.hoodOpen = '0';
         car.dataset.phase = 'lights';
         car.classList.replace('lights-pending', 'lights-starting');
         const lamp = $('.lamp-near .lamp-stroke', car);
@@ -253,33 +301,30 @@
         timers.push(setTimeout(() => { if (car.isConnected) settleHero(car); }, 1900));
       };
       if (!engineReady) { illuminate(); return; }
-      const overlay = $('.car-hood', car), panel = $('.hood-panel', car), bay = $('.engine-bay', car), underside = $('.hood-underside', car);
-      $('.hood-top-image', car).setAttribute('href', $('img', car).currentSrc);
-      overlay.style.opacity = '1';
       let elapsed = 0, previous;
-      const ease = (t) => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const ease = (t) => t * t * (3 - 2 * t);
       const animate = (now) => {
         if (!car.isConnected) return;
         if (reduceMotion()) { settleHero(car); return; }
         if (previous !== undefined && !document.hidden) elapsed += Math.min(now - previous, 80);
         previous = now;
-        let openness = 0;
-        if (elapsed < 300) car.dataset.phase = 'waiting';
-        else if (elapsed < 1600) { car.dataset.phase = 'opening'; openness = ease((elapsed - 300) / 1300); }
-        else if (elapsed < 2250) { car.dataset.phase = 'open'; openness = 1; }
-        else if (elapsed < 3500) { car.dataset.phase = 'closing'; openness = 1 - ease((elapsed - 2250) / 1250); }
+        let openness = 1;
+        if (elapsed < 1300) car.dataset.phase = 'open';
+        else if (elapsed < 3100) { car.dataset.phase = 'closing'; openness = 1 - ease((elapsed - 1300) / 1800); }
         else { heroFrame = 0; illuminate(); return; }
-        const angle = openness * 1.117;
-        panel.setAttribute('transform', hoodMatrix(angle));
-        bay.style.opacity = String(Math.min(1, angle / .06));
-        underside.style.opacity = String(Math.max(0, Math.min(1, (angle - .25) / .16)));
-        car.dataset.hoodOpen = openness.toFixed(3);
+        positionHood(car, openness);
         heroFrame = requestAnimationFrame(animate);
       };
       heroFrame = requestAnimationFrame(animate);
     };
     const ready = () => {
       if (!car.isConnected) return;
+      if (engineReady) {
+        $('.hood-top-image', car).src = $('img', car).currentSrc;
+        positionHood(car, 1); car.dataset.phase = 'open';
+        $('.car-hood', car).style.opacity = '1';
+      }
+      car.classList.remove('hood-loading');
       if (!('IntersectionObserver' in window)) { start(); return; }
       heroObserver = new IntersectionObserver((entries) => {
         if (entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.55)) start();
@@ -288,7 +333,7 @@
     };
     const img = $('img', car);
     const engine = new Image(); engine.src = 'assets/engine-bay.webp?v=20261024-hood';
-    const underside = new Image(); underside.src = 'assets/hood-underside.webp?v=20261024-hood';
+    const underside = $('.hood-underside', car);
     // Decode both textures before moving the hood. A missing engine asset falls back to lights only.
     const photoReady = img.decode ? img.decode().then(() => true, () => Boolean(img.naturalWidth)) : new Promise((resolve) => {
       if (img.complete) resolve(Boolean(img.naturalWidth));

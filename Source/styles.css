@@ -151,9 +151,13 @@ html[dir=ltr] .hero{background-image:radial-gradient(ellipse 58% 55% at 68% 52%,
 .hero-car::before{content:"";position:absolute;inset:0;z-index:-2;pointer-events:none;background:radial-gradient(ellipse 29% 5.8% at 36.5% 84.8%,rgba(3,1,0,.92) 0%,rgba(8,4,2,.58) 54%,transparent 100%),radial-gradient(ellipse 25% 5.2% at 74% 82.4%,rgba(3,1,0,.88) 0%,rgba(8,4,2,.52) 54%,transparent 100%),radial-gradient(ellipse 52% 9% at 52% 85.4%,rgba(4,2,1,.84) 0%,rgba(10,5,2,.46) 58%,transparent 100%),radial-gradient(ellipse 78% 12.5% at 51% 86.8%,rgba(6,3,1,.58) 0%,rgba(14,7,3,.24) 58%,transparent 100%);filter:blur(6px);transform:translateZ(0)}
 .hero-car::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse 10.5% 2.5% at 58.5% 86.4%,rgba(0,0,0,.98) 0%,rgba(4,2,1,.88) 52%,transparent 100%),radial-gradient(ellipse 19% 4.8% at 58.2% 87.2%,rgba(4,2,1,.78) 0%,rgba(10,5,2,.38) 58%,transparent 100%),radial-gradient(ellipse 9% 2.2% at 14.6% 83.3%,rgba(0,0,0,.97) 0%,rgba(4,2,1,.84) 52%,transparent 100%),radial-gradient(ellipse 16.5% 4.4% at 15% 84.2%,rgba(4,2,1,.72) 0%,rgba(10,5,2,.34) 58%,transparent 100%),radial-gradient(ellipse 8.5% 2.1% at 88.5% 78.5%,rgba(0,0,0,.97) 0%,rgba(4,2,1,.82) 52%,transparent 100%),radial-gradient(ellipse 15.5% 4.1% at 88% 79.4%,rgba(4,2,1,.70) 0%,rgba(10,5,2,.32) 58%,transparent 100%);filter:blur(2.2px);transform:translateZ(0)}
 .hero-car img{position:relative;z-index:1;width:100%;height:100%;max-width:none}
-.car-hood{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none;opacity:0;overflow:visible}
-.engine-bay,.hood-underside{opacity:0}
-.hood-panel{will-change:transform}
+.car-hood{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none;opacity:0;overflow:hidden}
+.hero-car.hood-loading{opacity:0}
+.hood-engine{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.engine-bay{opacity:0}
+.hood-panel{position:absolute;left:0;top:0;width:1672px;height:941px;transform-origin:0 0}
+.hood-top{position:absolute;inset:0;transform-origin:0 0;will-change:transform}
+.hero-car .hood-underside{position:absolute;left:0;top:0;width:1000px;height:600px;transform-origin:0 0;will-change:transform}
 .hero-car.lights-on .car-hood{display:none}
 .car-lights{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none;overflow:visible}
 .lamp-stroke{stroke:#f0f8ff;stroke-width:4.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0}
