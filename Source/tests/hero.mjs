@@ -6,7 +6,7 @@ const suite = createSuite('hero');
 async function heroState(page) {
   return page.evaluate(() => {
     const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
-    const car = rect('#hero-car'), photo = rect('#hero-car img'), overlay = rect('.car-lights');
+    const car = rect('#hero-car'), poster = rect('.rs5-poster'), canvas = rect('#rs5HeroCanvas');
     const dock = document.querySelector('.dock');
     const usableBottom = dock && getComputedStyle(dock).display !== 'none' ? dock.getBoundingClientRect().top : innerHeight;
     const fits = (selector) => {
@@ -15,13 +15,16 @@ async function heroState(page) {
     };
     const row = document.querySelector('.hero-specialism');
     const marques = [...row.querySelectorAll('.marque')];
-    const image = document.querySelector('#hero-car img');
+    const image = document.querySelector('.rs5-poster');
+    const source = document.querySelector('.rs5-source');
     return {
-      photoLoaded: image.complete && image.naturalWidth > 0,
-      imageAndLightsAligned: ['x', 'y', 'width', 'height'].every((key) => Math.abs(photo[key] - overlay[key]) < 0.5),
+      posterLoaded: image.complete && image.naturalWidth === 720 && image.naturalHeight === 400,
+      posterAndCanvasAligned: ['x', 'y', 'width', 'height'].every((key) => Math.abs(poster[key] - canvas[key]) < .5),
+      stageHasVideoAspect: Math.abs(car.width / car.height - 1.8) < .005 && car.width <= 520.5,
+      sourceIsInlineMuted: source.muted && source.playsInline && source.getAttribute('data-src').includes('assets/car-hood-animation.mp4'),
       titleVisible: fits('.hero h1'), bookingVisible: fits('.hero a[href="#book"]'),
       contactVisible: fits('.hero a[href^="https://wa.me/"]'), marquesVisible: fits('.hero-specialism'),
-      carBodyAndLampsVisible: car.width > 0 && car.height > 0 && car.top >= 0 && car.top + car.height * 0.85 <= usableBottom + 1,
+      carVisible: car.width > 0 && car.height > 0 && car.top >= 0 && car.bottom <= usableBottom + 1,
       namesCorrect: marques.map((marque) => marque.querySelector('span').textContent).join(' · ') === 'Audi · Volkswagen · Porsche',
       logosLoaded: marques.length === 3 && marques.every((marque) => {
         const logo = marque.querySelector('img'); return logo.complete && logo.naturalWidth > 0 && logo.alt === '';
@@ -34,64 +37,59 @@ async function heroState(page) {
       orderIsLeftToRight: getComputedStyle(row).direction === 'ltr' && marques.every((marque, index) => index === 0 || marque.getBoundingClientRect().left > marques[index - 1].getBoundingClientRect().right),
       rowFits: row.getBoundingClientRect().width > 0 && row.getBoundingClientRect().height > 0 && row.scrollWidth <= row.clientWidth + 1 && row.getBoundingClientRect().left >= -1 && row.getBoundingClientRect().right <= innerWidth + 1,
       contactLinkCorrect: document.querySelector('.hero a[href^="https://wa.me/"]').href.startsWith('https://wa.me/962795866455?text='),
-      carBodyBottom: car.top + car.height * 0.85, usableBottom
+      carBottom: car.bottom, usableBottom
     };
   });
 }
 
 await suite.run(async (browser) => {
-  // Hold the photo so the short animation can be observed from its true start.
   const desktop = await newContext(browser, { viewport: { width: 1366, height: 768 }, colorScheme: 'light' });
   const page = await desktop.newPage();
-  suite.watch(page, 'LED sequence');
-  let releasePhoto, photoRequested;
-  const photoGate = new Promise((resolveGate) => { releasePhoto = resolveGate; });
-  const requestSeen = new Promise((resolveSeen) => { photoRequested = resolveSeen; });
-  await page.route('**/assets/coupe-*.webp*', async (route) => { photoRequested(); await photoGate; await route.continue(); });
+  suite.watch(page, 'video introduction');
+  let releaseVideo, videoRequested;
+  const videoGate = new Promise((resolveGate) => { releaseVideo = resolveGate; });
+  const requestSeen = new Promise((resolveSeen) => { videoRequested = resolveSeen; });
+  let videoRequests = 0;
+  await page.route('**/assets/car-hood-animation.mp4*', async (route) => { videoRequests++; videoRequested(); await videoGate; await route.continue(); });
   try {
     await navigate(page, suite.url());
-    await Promise.race([requestSeen, new Promise((_, reject) => setTimeout(() => reject(new Error('Car photo was not requested.')), 5000))]);
-    suite.check('an incomplete photo keeps the lamps pending', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-pending') && !car.querySelector('img').complete));
+    await Promise.race([requestSeen, new Promise((_, reject) => setTimeout(() => reject(new Error('Hood video was not requested.')), 5000))]);
+    suite.check('undecoded video keeps the car hidden rather than flashing the closed poster', await page.locator('#hero-car').evaluate((car) => car.classList.contains('hood-loading') && Number(getComputedStyle(car).opacity) === 0));
     await page.evaluate(() => {
-      window.testLampSamples = [];
       window.testTextSamples = [];
-      const car = document.querySelector('#hero-car'), lamp = car.querySelector('.lamp-near .lamp-stroke');
-      let started;
+      const car = document.querySelector('#hero-car');
       const sample = () => {
         const title = document.querySelector('.hero h1');
         if (!title || !car.isConnected) return;
-        const titleStyle = getComputedStyle(title);
-        window.testTextSamples.push({ opacity: parseFloat(titleStyle.opacity), sheen: titleStyle.backgroundPosition });
-        if (car.classList.contains('lights-starting')) {
-          started ??= performance.now();
-          const style = getComputedStyle(lamp);
-          window.testLampSamples.push({ ms: performance.now() - started, offset: parseFloat(style.strokeDashoffset), opacity: parseFloat(style.opacity), photoLoaded: car.querySelector('img').complete && car.querySelector('img').naturalWidth > 0 });
-          if (performance.now() - started > 2200) return;
-        }
-        requestAnimationFrame(sample);
+        const style = getComputedStyle(title);
+        window.testTextSamples.push({ opacity: Number(style.opacity), sheen: style.backgroundPosition });
+        if (car.dataset.phase !== 'complete') requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
     });
-    releasePhoto();
+    releaseVideo();
     await waitForSteadyLights(page);
-    const samples = await page.evaluate(() => window.testLampSamples);
     const textSamples = await page.evaluate(() => window.testTextSamples);
-    suite.check('main heading fades into a readable final state', textSamples.some((sample) => sample.opacity < 0.8) && textSamples.some((sample) => sample.opacity > 0.99), textSamples);
+    suite.check('main heading fades into a readable final state', textSamples.some((sample) => sample.opacity < .8) && textSamples.some((sample) => sample.opacity > .99), textSamples);
     suite.check('metallic light travels across the heading', new Set(textSamples.map((sample) => sample.sheen)).size > 2);
-    suite.check('LED traces progress to steady light', samples.some((sample) => sample.offset > 0.9) && samples.some((sample) => sample.offset > 0.01 && sample.offset < 0.99) && samples.some((sample) => sample.offset < 0.001 && sample.opacity > 0.99), samples);
-    suite.check('illumination begins after the photo is decoded', samples.length > 0 && samples.every((sample) => sample.photoLoaded));
+    suite.check('photographic sequence finishes with a decoded and visible final frame', await page.locator('#hero-car').evaluate((car) => {
+      const video = car.querySelector('.rs5-source');
+      return car.dataset.phase === 'complete' && car.classList.contains('lights-on') && car.dataset.frame === 'video' && video.videoWidth === 720 && video.videoHeight === 400 && video.paused;
+    }));
     await waitForFonts(page);
     suite.check('desktop booking is visible immediately', (await heroState(page)).bookingVisible);
+    const requestsBeforeRerender = videoRequests;
     await page.click('[data-act="lang"]');
-    suite.check('language rerender does not replay the text introduction', await page.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && parseFloat(getComputedStyle(title).opacity) === 1));
-    suite.check('switching language keeps steady lights', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && getComputedStyle(car.querySelector('.lamp-stroke')).animationName === 'none'));
+    await waitForSteadyLights(page);
+    suite.check('language rerender does not replay the text introduction', await page.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && Number(getComputedStyle(title).opacity) === 1));
+    suite.check('switching language uses the steady final photograph without loading video again', videoRequests === requestsBeforeRerender && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
     await page.click('.hero a[href="#book"]');
     await page.waitForSelector('[data-form="book"]');
     await page.evaluate(() => { location.hash = ''; });
-    await page.waitForSelector('#hero-car.lights-on');
-    suite.check('returning from booking keeps the lamps lit', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on')));
+    await waitForSteadyLights(page);
+    suite.check('returning from booking keeps the final photograph without replay', videoRequests === requestsBeforeRerender && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
   } finally {
-    releasePhoto();
+    releaseVideo();
     await desktop.close();
   }
 
@@ -111,16 +109,14 @@ await suite.run(async (browser) => {
           await focused.screenshot({ path: resolve(suite.output, `${language}-${device}-${colorScheme}.png`) });
           if (device === 'phone' && colorScheme === 'light') {
             await focused.click('[data-act="menu"]');
-            suite.check(`${language} menu rerender keeps the lamps lit`, await focused.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on')));
+            await waitForSteadyLights(focused);
+            suite.check(`${language} menu rerender keeps the final photograph without replay`, await focused.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.classList.contains('lights-on') && !car.querySelector('.rs5-source').currentSrc));
           }
-        } finally {
-          await context.close();
-        }
+        } finally { await context.close(); }
       }
     }
   }
 
-  // Smaller phones and tablet widths only need the compact marque row to fit.
   for (const language of ['ar', 'en']) {
     for (const width of [320, 768]) {
       const context = await newContext(browser, { viewport: { width, height: 900 }, reducedMotion: 'reduce' }, language);
@@ -128,13 +124,12 @@ await suite.run(async (browser) => {
         const narrow = await context.newPage();
         suite.watch(narrow, `${language}/${width}px`);
         await navigate(narrow, suite.url());
+        await waitForSteadyLights(narrow);
         await waitForFonts(narrow);
         await narrow.waitForFunction(() => [...document.querySelectorAll('.hero-specialism img')].every((image) => image.complete && image.naturalWidth > 0));
         const state = await heroState(narrow), overflow = await horizontalOverflow(narrow);
         suite.check(`${language}/${width}px marque row fits`, state.rowFits && state.namesCorrect && state.logosLoaded && state.logosBesideNames && state.orderIsLeftToRight && !overflow.length, { state, overflow });
-      } finally {
-        await context.close();
-      }
+      } finally { await context.close(); }
     }
   }
 
@@ -142,13 +137,12 @@ await suite.run(async (browser) => {
   try {
     const reducedPage = await reduced.newPage();
     suite.watch(reducedPage, 'reduced motion');
+    let videoRequests = 0;
+    reducedPage.on('request', (request) => { if (request.url().includes('/assets/car-hood-animation.mp4')) videoRequests++; });
     await navigate(reducedPage, suite.url());
-    suite.check('reduced motion keeps text visible without fade or sheen', await reducedPage.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && parseFloat(getComputedStyle(title).opacity) === 1));
-    suite.check('reduced motion shows steady light without animation', await reducedPage.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && [...car.querySelectorAll('.lamp-stroke')].every((lamp) => {
-      const style = getComputedStyle(lamp); return style.animationName === 'none' && parseFloat(style.opacity) === 1 && parseFloat(style.strokeDashoffset) === 0;
-    })));
+    await waitForSteadyLights(reducedPage);
+    suite.check('reduced motion keeps text visible without fade or sheen', await reducedPage.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && Number(getComputedStyle(title).opacity) === 1));
+    suite.check('reduced motion shows the final lit photograph without loading video', videoRequests === 0 && await reducedPage.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
     await reducedPage.screenshot({ path: resolve(suite.output, 'reduced-motion-phone.png') });
-  } finally {
-    await reduced.close();
-  }
+  } finally { await reduced.close(); }
 });

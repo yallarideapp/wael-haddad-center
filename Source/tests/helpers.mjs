@@ -61,10 +61,13 @@ export async function waitForFonts(page) {
 export async function waitForSteadyLights(page) {
   await page.waitForFunction(() => {
     const car = document.querySelector('#hero-car');
-    return car && !car.classList.contains('lights-pending') && [...car.querySelectorAll('.lamp-stroke')].every((lamp) => {
-      const style = getComputedStyle(lamp);
-      return Math.abs(parseFloat(style.strokeDashoffset)) < 0.001 && parseFloat(style.opacity) > 0.99;
-    });
+    if (!car || car.dataset.phase !== 'complete' || !car.classList.contains('lights-on') || car.classList.contains('hood-loading')) return false;
+    const poster = car.querySelector('.rs5-poster');
+    if (!poster || !poster.complete || !poster.naturalWidth) return false;
+    const painted = car.dataset.frame === 'video' ? car.querySelector('#rs5HeroCanvas') : car.dataset.frame === 'poster' ? poster : null;
+    if (!painted) return false;
+    const bounds = painted.getBoundingClientRect(), style = getComputedStyle(painted);
+    return bounds.width > 0 && bounds.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > .99 && Number(getComputedStyle(car).opacity) > .99;
   });
 }
 

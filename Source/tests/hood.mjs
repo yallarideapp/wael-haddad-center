@@ -1,169 +1,157 @@
 import { resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
 import { createSuite, navigate, newContext, waitForSteadyLights } from './helpers.mjs';
 
 const suite = createSuite('hood');
+const mediaPattern = '**/assets/car-hood-animation.mp4*';
 
-// Inspect the production geometry in an isolated VM. The extra export exists
-// only in this test's source string; no diagnostic API ships with the site.
-function checkHingeGeometry() {
-  const source = readFileSync(new URL('../hood-motion.js', import.meta.url), 'utf8');
-  const anchor = 'window.WHHood = { create };';
-  if (!source.includes(anchor)) throw new Error('Bonnet geometry test could not find the module boundary');
-  const scope = { window: {} };
-  runInNewContext(source.replace(anchor,
-    'window.WHHood = { lift, rotate, surface, photoPoint, REAR, OPENING };'), scope);
-  const { lift, rotate, surface, photoPoint, REAR, OPENING } = scope.window.WHHood;
-  const distance = (a, b) => Math.hypot(...a.map((value, i) => value - b[i]));
-  // The projection and four seam landmarks are independently fixed to the
-  // current photograph, so moving the hinge or clipping the grille fails here.
-  const project = ([x, y, z]) => [2000*x/z + 836, 2000*y/z + 300];
-  const corners = [[0, 0, [490, 307]], [1, 0, [1006, 319]], [0, 1, [129, 411]], [1, 1, [579, 437]]];
-  const cornerError = Math.max(...corners.map(([u, v, expected]) => distance(project(surface(u, v)), expected)));
-  suite.check('closed bonnet corners retain the original photo seam', cornerError < 1e-8, { maximumPixelError: cornerError });
-  const angles = [-OPENING, -OPENING*.75, -OPENING*.5, -OPENING*.25, 0, .4*Math.PI/180];
-  const hinges = [REAR[0], REAR[3]];
-  const hingeError = Math.max(...angles.flatMap((angle) => hinges.map((pixel) => distance(project(rotate(lift(pixel), angle)), pixel))));
-  suite.check('both windshield hinges remain fixed through every angle and latch settle', hingeError < 1e-8, { maximumPixelError: hingeError });
-  const points = [0, .25, .5, .75, 1].flatMap((u) => [0, .33, .67, 1].map((v) => surface(u, v)));
-  let rigidError = 0;
-  for (const angle of angles) {
-    const turned = points.map((point) => rotate(point, angle));
-    for (let i = 0; i < points.length; i++) for (let j = i + 1; j < points.length; j++) {
-      rigidError = Math.max(rigidError, Math.abs(distance(turned[i], turned[j]) - distance(points[i], points[j])));
+// The first pose is paused, so drawing the actual decoded video into a second
+// canvas provides an independent pixel comparison with the visible canvas.
+async function firstFramePixels(page) {
+  return page.evaluate(() => {
+    const car = document.querySelector('#hero-car'), canvas = car.querySelector('#rs5HeroCanvas'), video = car.querySelector('.rs5-source');
+    const actual = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    window.firstHoodPixels = new Uint8ClampedArray(actual);
+    const reference = document.createElement('canvas'); reference.width = 720; reference.height = 400;
+    const ctx = reference.getContext('2d'); ctx.drawImage(video, 0, 0, 720, 400);
+    const expected = ctx.getImageData(0, 0, 720, 400).data;
+    let error = 0, opaque = 0, min = 255, max = 0;
+    for (let i = 0; i < actual.length; i += 4) {
+      for (let c = 0; c < 3; c++) { error += Math.abs(actual[i + c] - expected[i + c]); min = Math.min(min, actual[i + c]); max = Math.max(max, actual[i + c]); }
+      if (actual[i + 3] === 255) opaque++;
     }
-  }
-  suite.check('bonnet keeps its shape without bending or stretching throughout closure', rigidError < 1e-10, { maximumDistanceError: rigidError });
-  let boundaryError = 0;
-  for (let i = 0; i <= 40; i++) {
-    const t = i/40;
-    for (const [u, v] of [[t, 0], [t, 1], [0, t], [1, t]]) {
-      boundaryError = Math.max(boundaryError, distance(project(rotate(surface(u, v), 0)), photoPoint(u, v)));
-    }
-  }
-  suite.check('closed bonnet boundary reprojects flush onto the original photo', boundaryError < 1e-8, { maximumPixelError: boundaryError });
+    return { width: canvas.width, height: canvas.height, videoWidth: video.videoWidth, videoHeight: video.videoHeight, paused: video.paused, meanError: error / (720 * 400 * 3), opaqueFraction: opaque / (720 * 400), dynamicRange: max - min, phase: car.dataset.phase, frame: car.dataset.frame };
+  });
 }
 
-// Read the rendered hood once, immediately after the animation's frame. Element
-// bounds alone cannot catch a transparent, clipped, or incorrectly placed mesh.
-async function paintedHoodBounds(page) {
-  return page.evaluate(() => new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      const canvas = document.querySelector('.hood-mesh');
-      const gl = canvas?.getContext('webgl');
-      if (!gl) { resolve(null); return; }
-      const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
-      const pixels = new Uint8Array(width * height * 4);
-      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      let left = width, top = height, right = -1, bottom = -1, painted = 0;
-      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-        if (pixels[(y * width + x) * 4 + 3] < 32) continue;
-        const imageY = height - y - 1;
-        left = Math.min(left, x); right = Math.max(right, x);
-        top = Math.min(top, imageY); bottom = Math.max(bottom, imageY);
-        painted++;
+async function finalFramePixels(page) {
+  return page.evaluate(() => {
+    const car = document.querySelector('#hero-car'), canvas = car.querySelector('#rs5HeroCanvas'), video = car.querySelector('.rs5-source'), poster = car.querySelector('.rs5-poster');
+    const actual = canvas.getContext('2d').getImageData(0, 0, 720, 400).data;
+    const reference = document.createElement('canvas'); reference.width = 720; reference.height = 400;
+    const ctx = reference.getContext('2d'); ctx.drawImage(poster, 0, 0, 720, 400);
+    const expected = ctx.getImageData(0, 0, 720, 400).data;
+    let posterError = 0, changed = 0, hash = 2166136261;
+    for (let i = 0; i < actual.length; i += 4) {
+      let difference = 0;
+      for (let c = 0; c < 3; c++) {
+        posterError += Math.abs(actual[i + c] - expected[i + c]);
+        difference += Math.abs(actual[i + c] - window.firstHoodPixels[i + c]);
+        hash = Math.imul(hash ^ actual[i + c], 16777619) >>> 0;
       }
-      resolve({
-        left, right,
-        top, bottom,
-        painted, width, height
-      });
-    });
-  }));
+      if (difference > 24) changed++;
+    }
+    return { posterMeanError: posterError / (720 * 400 * 3), changedFraction: changed / (720 * 400), hash, videoTime: video.currentTime, duration: video.duration, paused: video.paused, phase: car.dataset.phase, frame: car.dataset.frame };
+  });
+}
+
+function watchExpectedMediaFailure(page, label) {
+  // A deliberately rejected/404 media request may produce a browser resource
+  // error. JavaScript exceptions remain failures in these fallback scenarios.
+  page.on('pageerror', (error) => suite.errors.push(`${label} page: ${error.message}`));
 }
 
 await suite.run(async (browser) => {
-  checkHingeGeometry();
   for (const [device, width, height] of [['phone', 390, 664], ['desktop', 1366, 768]]) {
     const context = await newContext(browser, { viewport: { width, height } });
+    let release;
     try {
       const page = await context.newPage(); suite.watch(page, device);
+      const gate = new Promise((resolveGate) => { release = resolveGate; });
+      await page.route(mediaPattern, async (route) => { await gate; await route.continue(); });
       await navigate(page, suite.url());
       await page.evaluate(() => {
         window.hoodSamples = [];
-        const car = document.querySelector('#hero-car');
+        const car = document.querySelector('#hero-car'), video = car.querySelector('.rs5-source');
         const sample = () => {
           if (!car.isConnected) return;
-          const photo = car.querySelector('img').getBoundingClientRect();
-          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, open: Number(car.dataset.hoodOpen || 0), lights: getComputedStyle(car.querySelector('.lamp')).opacity, body: [photo.x, photo.y, photo.width, photo.height] });
+          const box = car.getBoundingClientRect();
+          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, frame: car.dataset.frame, videoTime: video.currentTime, body: [box.x, box.y, box.width, box.height] });
           if (car.dataset.phase !== 'complete') requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
       });
+      release();
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
-      const painted = await paintedHoodBounds(page);
-      // These pixels contain the wheels and lower body, outside the bonnet and LEDs.
-      const fixedBodyClip = await page.locator('#hero-car > img').evaluate((photo) => {
-        const box = photo.getBoundingClientRect();
-        return { x: box.x, y: box.y + box.height*.58, width: box.width, height: box.height*.31 };
-      });
-      const bodyBefore = await page.screenshot({ clip: fixedBodyClip });
+      const first = await firstFramePixels(page);
+      suite.check(`${device} first visible pose is the real decoded video frame`, first.width === 720 && first.height === 400 && first.videoWidth === 720 && first.videoHeight === 400 && first.meanError < .5 && first.opaqueFraction > .999 && first.dynamicRange > 100 && first.frame === 'video' && first.phase === 'open', first);
+      suite.check(`${device} open pose pauses briefly before mechanical closure`, first.paused, first);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-open.png`) });
-      suite.check(`${device} rendered open hood rises above its closed windshield seam`, painted && painted.painted > 10000 && painted.top < 330, painted);
-      suite.check(`${device} rendered open hood has clear space inside every frame edge`, painted && painted.left > 2 && painted.right < painted.width - 2 && painted.top > 2 && painted.bottom < painted.height - 2, painted);
-      await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing' && Number(document.querySelector('#hero-car').dataset.hoodOpen) < .55);
+      await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing');
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-closing.png`) });
-      const bodyDuring = await page.screenshot({ clip: fixedBodyClip });
-      await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing' && Number(document.querySelector('#hero-car').dataset.hoodOpen) < .2);
-      await page.screenshot({ path: resolve(suite.output, `${device}-hood-settling.png`) });
       await waitForSteadyLights(page);
-      await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
+      const final = await finalFramePixels(page);
       await page.screenshot({ path: resolve(suite.output, `${device}-lights-on.png`) });
+      suite.check(`${device} decoded sequence contains genuinely different open and closed car pixels`, final.changedFraction > .025, final);
+      suite.check(`${device} final video crop agrees with the static lit poster`, final.posterMeanError < 5, final);
+      suite.check(`${device} video stops on its last decoded frame`, final.paused && Number.isFinite(final.duration) && final.duration >= 2.4 && final.duration <= 2.6 && final.videoTime >= final.duration - .15 && final.videoTime <= final.duration + .01, final);
+      await page.waitForTimeout(220);
+      const frozen = await finalFramePixels(page);
+      suite.check(`${device} final frame remains frozen with no loop or later redraw`, frozen.hash === final.hash && frozen.videoTime === final.videoTime && frozen.paused && frozen.phase === 'complete', { final, frozen });
       const samples = await page.evaluate(() => window.hoodSamples);
       const phases = [...new Set(samples.map((s) => s.phase).filter(Boolean))];
-      suite.check(`${device} starts open, closes, then illuminates`, ['open', 'closing', 'lights', 'complete'].every((p, i, order) => phases.includes(p) && (!i || phases.indexOf(p) > phases.indexOf(order[i - 1]))), phases);
-      suite.check(`${device} hood moves through intermediate positions`, samples.find((s) => s.phase === 'open')?.open === 1 && samples.some((s) => s.phase === 'closing' && s.open > .2 && s.open < .8));
-      const moving = samples.filter((s) => s.phase === 'open' || s.phase === 'closing');
-      const contact = moving.findIndex((s) => s.open <= 0);
-      const lowering = contact < 0 ? moving : moving.slice(0, contact + 1);
-      suite.check(`${device} lowers without reopening and settles by less than half a degree`, moving[0]?.open === 1 && contact >= 0 && lowering.every((s, i) => !i || s.open <= lowering[i - 1].open) && moving.every((s) => s.open >= -.013 && s.open <= 1) && moving.at(-1)?.open === 0);
-      suite.check(`${device} lamps stay off until the hood closes`, samples.filter((s) => ['open', 'closing'].includes(s.phase)).every((s) => Number(s.lights) === 0));
-      const bodyFrames = samples.filter((s) => ['open', 'closing', 'lights', 'complete'].includes(s.phase));
-      const shiftedBody = bodyFrames.find((s) => s.body.some((value, i) => Math.abs(value-bodyFrames[0].body[i]) >= .1));
-      suite.check(`${device} car position and scale remain fixed throughout closure`, !shiftedBody, { initial: bodyFrames[0], shifted: shiftedBody });
-      suite.check(`${device} wheel and body pixels are unchanged while the bonnet moves`, bodyBefore.equals(bodyDuring));
-      const opened = samples.find((s) => s.phase === 'open'), closing = samples.find((s) => s.phase === 'closing');
-      // Ignore a rounded zero while crossing the latch; seating is the final
-      // uninterrupted run of zero angle before illumination.
-      const closingFrames = samples.filter((s) => s.phase === 'closing');
-      const seated = closingFrames.find((s, i) => s.open === 0 && closingFrames.slice(i).every((frame) => frame.open === 0));
-      const lights = samples.find((s) => s.phase === 'lights');
-      const timing = opened && closing && seated && lights ? { hold: closing.time-opened.time, descent: seated.time-closing.time, seated: lights.time-seated.time } : null;
-      suite.check(`${device} calibrated pace holds briefly, lowers in 1.2 seconds, then seats before lights`, timing && timing.hold >= 200 && timing.hold <= 650 && timing.descent >= 1000 && timing.descent <= 1800 && timing.seated >= 60 && timing.seated <= 400, timing);
-      suite.check(`${device} final state hides the moving hood and engine layers`, await page.locator('.car-hood').evaluate((el) => getComputedStyle(el).display === 'none' && Boolean(el.querySelector('.hood-mesh'))));
-    } finally { await context.close(); }
+      suite.check(`${device} sequence advances from decoded open frame through closing to complete`, ['open', 'closing', 'complete'].every((phase, index, order) => phases.includes(phase) && (!index || phases.indexOf(phase) > phases.indexOf(order[index - 1]))), phases);
+      const moving = samples.filter((sample) => ['open', 'closing', 'complete'].includes(sample.phase));
+      const shifted = moving.find((sample) => sample.body.some((value, index) => Math.abs(value - moving[0].body[index]) >= .1));
+      suite.check(`${device} canvas stage position and dimensions remain fixed throughout playback`, moving.length > 10 && !shifted, { initial: moving[0], shifted });
+      const opened = samples.find((sample) => sample.phase === 'open'), closing = samples.find((sample) => sample.phase === 'closing'), complete = samples.find((sample) => sample.phase === 'complete');
+      const timing = opened && closing && complete ? { hold: closing.time - opened.time, playback: complete.time - closing.time } : null;
+      suite.check(`${device} holds the initial frame for 300ms and plays the 2.5-second crop once`, timing && timing.hold >= 200 && timing.hold <= 700 && timing.playback >= 2200 && timing.playback <= 3500, timing);
+      suite.check(`${device} uses raster media without the old hood mesh, engine cutout, or LED overlay`, await page.locator('#hero-car').evaluate((car) => !car.querySelector('.hood-mesh,.car-hood,.car-engine,.car-lights') && getComputedStyle(car.querySelector('#rs5HeroCanvas')).clipPath === 'none'));
+    } finally { if (release) release(); await context.close(); }
   }
 
   const loading = await newContext(browser);
+  let releaseLoading;
   try {
     const page = await loading.newPage(); suite.watch(page, 'loading');
-    let release;
-    const gate = new Promise((resolve) => { release = resolve; });
-    await page.route('**/assets/hood-underside.webp*', async (route) => { await gate; await route.continue(); });
+    let requested;
+    const seen = new Promise((resolveSeen) => { requested = resolveSeen; });
+    const gate = new Promise((resolveGate) => { releaseLoading = resolveGate; });
+    await page.route(mediaPattern, async (route) => { requested(); await gate; await route.continue(); });
     await navigate(page, suite.url());
-    await page.waitForFunction(() => document.querySelector('#hero-car > img').complete);
-    suite.check('slow hood image never flashes a closed car first', await page.locator('#hero-car').evaluate((car) => car.classList.contains('hood-loading') && getComputedStyle(car).opacity === '0'));
-    release();
-    await page.waitForFunction(() => !document.querySelector('#hero-car').classList.contains('hood-loading'));
-    const painted = await paintedHoodBounds(page);
-    suite.check('first visible pose is already painted open after the textures decode', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'open' && car.dataset.hoodOpen === '1.000' && getComputedStyle(car).opacity === '1') && painted && painted.painted > 10000 && painted.top < 330, painted);
-  } finally { await loading.close(); }
+    await Promise.race([seen, new Promise((_, reject) => setTimeout(() => reject(new Error('No video load was started')), 5000))]);
+    await page.waitForFunction(() => document.querySelector('.rs5-poster').complete && document.querySelector('.rs5-poster').naturalWidth > 0);
+    suite.check('slow video decoding never flashes the closed poster before the open frame', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'loading' && car.classList.contains('hood-loading') && Number(getComputedStyle(car).opacity) === 0));
+    releaseLoading();
+    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
+    const painted = await firstFramePixels(page);
+    suite.check('first paint removes loading only after genuine open-frame pixels exist', painted.phase === 'open' && painted.meanError < .5 && painted.opaqueFraction > .999 && await page.locator('#hero-car').evaluate((car) => !car.classList.contains('hood-loading') && Number(getComputedStyle(car).opacity) > .99), painted);
+  } finally { if (releaseLoading) releaseLoading(); await loading.close(); }
 
   const interrupted = await newContext(browser);
   try {
-    const page = await interrupted.newPage(); suite.watch(page, 'interruption');
+    const page = await interrupted.newPage(); suite.watch(page, 'language interruption');
+    let requests = 0;
+    page.on('request', (request) => { if (request.url().includes('/assets/car-hood-animation.mp4')) requests++; });
     await navigate(page, suite.url());
     await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing');
+    const oldVideo = await page.locator('.rs5-source').elementHandle(), before = requests;
     await page.click('[data-act="lang"]');
-    suite.check('language change during closing settles without replay or a detached animation', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.classList.contains('lights-on')));
+    await waitForSteadyLights(page);
+    suite.check('language change stops the old video and uses the final poster without another load', requests === before && await oldVideo.evaluate((video) => !video.isConnected && video.paused) && await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && !car.querySelector('.rs5-source').currentSrc));
   } finally { await interrupted.close(); }
+
+  const navigation = await newContext(browser);
+  try {
+    const page = await navigation.newPage(); suite.watch(page, 'navigation interruption');
+    await navigate(page, suite.url());
+    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing');
+    const oldVideo = await page.locator('.rs5-source').elementHandle();
+    await page.click('.hero a[href="#book"]');
+    await page.waitForSelector('[data-form="book"]');
+    suite.check('leaving the hero cancels playback on the detached video', await oldVideo.evaluate((video) => !video.isConnected && video.paused));
+    await page.evaluate(() => { location.hash = ''; });
+    await waitForSteadyLights(page);
+    suite.check('returning after interrupted playback shows the final poster without replay', await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && !car.querySelector('.rs5-source').currentSrc));
+  } finally { await navigation.close(); }
 
   const reduced = await newContext(browser, { reducedMotion: 'reduce' });
   try {
     const page = await reduced.newPage(); suite.watch(page, 'reduced motion');
-    await navigate(page, suite.url());
-    suite.check('reduced motion skips the hood and shows steady lamps', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.classList.contains('lights-on') && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
+    let requests = 0;
+    page.on('request', (request) => { if (request.url().includes('/assets/car-hood-animation.mp4')) requests++; });
+    await navigate(page, suite.url()); await waitForSteadyLights(page);
+    suite.check('reduced motion shows a decoded final photograph and never fetches video', requests === 0 && await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
   } finally { await reduced.close(); }
 
   const changedPreference = await newContext(browser);
@@ -172,41 +160,19 @@ await suite.run(async (browser) => {
     await navigate(page, suite.url());
     await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
-    suite.check('enabling reduced motion during closing immediately settles the car', await page.locator('#hero-car').evaluate((car) => car.dataset.hoodOpen === '0' && car.classList.contains('lights-on')));
+    await waitForSteadyLights(page);
+    suite.check('enabling reduced motion during closure immediately stops video on the final poster', await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.querySelector('.rs5-source').paused));
   } finally { await changedPreference.close(); }
 
-  // A failed inset must never leave a black cutout or prevent the existing lights.
-  const fallback = await newContext(browser);
-  try {
-    const page = await fallback.newPage();
-    await page.route('**/assets/engine-bay.webp*', (route) => route.fulfill({ status: 200, contentType: 'image/webp', body: Buffer.from('invalid image') }));
-    await navigate(page, suite.url());
-    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
-    suite.check('an unavailable engine texture falls back to the closed car and lights', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
-  } finally { await fallback.close(); }
-
-  const noWebGL = await newContext(browser);
-  try {
-    await noWebGL.addInitScript(() => {
-      const original = HTMLCanvasElement.prototype.getContext;
-      HTMLCanvasElement.prototype.getContext = function (kind, ...options) {
-        return kind === 'webgl' ? null : original.call(this, kind, ...options);
-      };
-    });
-    const page = await noWebGL.newPage(); suite.watch(page, 'WebGL unavailable');
-    await navigate(page, suite.url());
-    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
-    suite.check('WebGL unavailable falls back to the visible closed car and steady lights', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && !car.classList.contains('hood-loading') && getComputedStyle(car).opacity === '1' && car.querySelector('img').naturalWidth > 0 && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
-  } finally { await noWebGL.close(); }
-
-  const lostWebGL = await newContext(browser);
-  try {
-    const page = await lostWebGL.newPage(); suite.watch(page, 'WebGL context loss');
-    await navigate(page, suite.url());
-    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
-    await page.locator('.hood-mesh').evaluate((canvas) => canvas.getContext('webgl').getExtension('WEBGL_lose_context').loseContext());
-    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
-    suite.check('losing the drawing context immediately restores the complete closed car', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
-  } finally { await lostWebGL.close(); }
+  for (const failure of ['missing', 'corrupt', 'autoplay']) {
+    const context = await newContext(browser);
+    try {
+      if (failure === 'autoplay') await context.addInitScript(() => { HTMLMediaElement.prototype.play = function () { return Promise.reject(Object.assign(new Error('Playback intentionally blocked'), { name: 'NotAllowedError' })); }; });
+      const page = await context.newPage(); watchExpectedMediaFailure(page, failure);
+      if (failure === 'missing') await page.route(mediaPattern, (route) => route.fulfill({ status: 404, contentType: 'video/mp4', body: '' }));
+      if (failure === 'corrupt') await page.route(mediaPattern, (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: Buffer.from('invalid media') }));
+      await navigate(page, suite.url()); await waitForSteadyLights(page);
+      suite.check(`${failure} media safely resolves to the visible final photograph`, await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && car.classList.contains('lights-on') && !car.classList.contains('hood-loading') && car.querySelector('.rs5-source').paused));
+    } finally { await context.close(); }
+  }
 });

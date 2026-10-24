@@ -176,151 +176,66 @@
     };
     try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
   }
-  let timers = [], heroObserver = null, heroFrame = 0, heroRenderer = null;
+  let timers = [], heroObserver = null, heroRenderer = null;
   const clearTimers = () => {
     timers.forEach((t) => clearInterval(t)); timers = [];
     if (heroObserver) { heroObserver.disconnect(); heroObserver = null; }
-    cancelAnimationFrame(heroFrame); heroFrame = 0;
     if (heroRenderer) { heroRenderer.destroy(); heroRenderer = null; }
   };
   const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let heroLightsPlayed = false, heroIntroPlayed = false;
 
   function heroCar() {
-    const state = heroLightsPlayed || reduceMotion() ? 'lights-on' : 'lights-pending hood-loading';
-    // Image and light paths share one coordinate system, including at mobile sizes.
-    const near = 'M640 451 L654 467 Q658 470 669 469 L762 465 M786 488 L813 483 Q827 480 834 464 L846 439';
-    const far = 'M125 431 L113 463 Q112 470 123 473 M148 459 L174 463 L191 448';
-    const hood = 'M129 411 C176 355 323 316 490 307 C656 298 870 306 1006 319 C874 325 719 368 579 437 C443 423 275 433 129 411Z';
+    const settled = heroLightsPlayed || reduceMotion();
     return `<div class="hero-visual" aria-hidden="true">
-      <div class="hero-car ${state}" id="hero-car">
-        <img src="assets/coupe-studio.webp?v=20261023-cutout" srcset="assets/coupe-studio-mobile.webp?v=20261023-cutout 840w, assets/coupe-studio.webp?v=20261023-cutout 1672w" sizes="(max-width: 760px) 100vw, 62vw" width="1672" height="941" alt="" fetchpriority="high" decoding="async">
-        <div class="car-hood">
-          <svg class="hood-engine" viewBox="0 0 1672 941" fill="none" focusable="false">
-            <defs><clipPath id="hood-outline"><path d="${hood}"/></clipPath></defs>
-            <g class="engine-bay" clip-path="url(#hood-outline)">
-              <path d="${hood}" fill="#111213"/>
-              <image href="assets/engine-bay.webp?v=20261024-hood-hinge" x="110" y="290" width="920" height="170"/>
-            </g>
-          </svg>
-          <canvas class="hood-mesh" width="1672" height="1021"></canvas>
-        </div>
-        <svg class="car-lights" viewBox="0 0 1672 941" fill="none" focusable="false">
-          <defs><filter id="lamp-halo" x="-30%" y="-100%" width="160%" height="300%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="8"/></filter></defs>
-          <g class="lamp lamp-far"><path class="lamp-glow" d="${far}"/><path class="lamp-stroke" pathLength="1" d="${far}"/></g>
-          <g class="lamp lamp-near"><path class="lamp-glow" d="${near}"/><path class="lamp-stroke" pathLength="1" d="${near}"/></g>
-        </svg>
+      <div class="hero-car rs5-real-hero ${settled ? 'lights-on' : 'lights-pending hood-loading'}" id="hero-car" data-phase="${settled ? 'complete' : 'loading'}" data-frame="poster">
+        <img class="rs5-poster" src="assets/car-hood-closed.webp?v=20261024-real-video" width="720" height="400" alt="" fetchpriority="high" decoding="async">
+        <video class="rs5-source" id="rs5SourceVideo" data-src="assets/car-hood-animation.mp4?v=20261024-real-video" muted playsinline preload="none" tabindex="-1"></video>
+        <canvas id="rs5HeroCanvas" width="720" height="400" class="rs5-canvas"></canvas>
       </div>
     </div>`;
   }
   function settleHero(car) {
     if (!car) return;
-    car.className = 'hero-car lights-on'; car.dataset.phase = 'complete';
-    $('.car-hood', car).style.opacity = '0'; car.dataset.hoodOpen = '0';
+    heroLightsPlayed = true;
+    car.className = 'hero-car rs5-real-hero lights-on';
+    car.dataset.phase = 'complete'; car.dataset.frame = 'poster';
+    if (heroObserver) { heroObserver.disconnect(); heroObserver = null; }
     if (heroRenderer) { heroRenderer.destroy(); heroRenderer = null; }
-  }
-  function positionHood(car, openness) {
-    if (!heroRenderer) return;
-    heroRenderer.render(openness);
-    // The panel hides the bay first; fade only the final sliver at the latch.
-    $('.engine-bay', car).style.opacity = Math.max(0, Math.min(1, openness * 34 / 1.5));
-    car.dataset.hoodOpen = openness.toFixed(3);
   }
   function startHeroLights() {
     const car = $('#hero-car'); if (!car) return;
-    if (heroLightsPlayed || reduceMotion()) {
-      settleHero(car); heroLightsPlayed = true; return;
-    }
-    let engineReady = false;
-    const start = () => {
-      if (!car.isConnected) return;
+    if (heroLightsPlayed || reduceMotion()) { settleHero(car); return; }
+    try {
+      heroRenderer = window.WHHood?.create({
+        canvas: $('.rs5-canvas', car), video: $('.rs5-source', car),
+        onPhase: (phase) => {
+          if (!car.isConnected) return;
+          car.dataset.phase = phase; car.dataset.frame = 'video';
+          car.classList.remove('hood-loading');
+          if (phase === 'complete') {
+            car.classList.remove('lights-pending'); car.classList.add('lights-on');
+          }
+        },
+        onError: () => { if (car.isConnected) settleHero(car); }
+      });
+    } catch { heroRenderer = null; }
+    if (!heroRenderer) { settleHero(car); return; }
+    const controller = heroRenderer;
+    const play = () => {
+      if (!car.isConnected || controller !== heroRenderer) return;
       if (heroObserver) { heroObserver.disconnect(); heroObserver = null; }
-      heroLightsPlayed = true;
-      const illuminate = () => {
-        $('.car-hood', car).style.opacity = '0';
-        car.classList.remove('hood-loading'); car.dataset.hoodOpen = '0';
-        car.dataset.phase = 'lights';
-        car.classList.replace('lights-pending', 'lights-starting');
-        const lamp = $('.lamp-near .lamp-stroke', car);
-        lamp.addEventListener('animationend', () => { if (car.isConnected) settleHero(car); }, { once: true });
-        timers.push(setTimeout(() => { if (car.isConnected) settleHero(car); }, 1900));
-      };
-      if (!engineReady) { illuminate(); return; }
-      let elapsed = 0, previous;
-      // Match cubic-bezier(.25,1,.35,1) between the supplied angular keyframes.
-      // Every frame, including the tiny latch settle, uses the same fixed hinge axis.
-      const ease = (progress) => {
-        let lo = 0, hi = 1;
-        for (let i = 0; i < 16; i++) {
-          const t = (lo + hi) / 2, q = 1 - t;
-          const x = 3*q*q*t*.25 + 3*q*t*t*.35 + t*t*t;
-          if (x < progress) lo = t; else hi = t;
-        }
-        return 1 - Math.pow(1 - (lo + hi) / 2, 3);
-      };
-      const closeAt = (progress) => {
-        const keys = [[0,34],[.78,1.5],[.88,-.4],[1,0]];
-        const end = keys.findIndex(([time]) => time > progress);
-        if (end < 1) return 0;
-        const [from, a] = keys[end-1], [to, b] = keys[end];
-        return (a + (b-a)*ease((progress-from)/(to-from))) / 34;
-      };
-      const animate = (now) => {
-        if (!car.isConnected) return;
-        if (reduceMotion()) { settleHero(car); return; }
-        if (previous !== undefined && !document.hidden) elapsed += Math.min(now - previous, 80);
-        previous = now;
-        let openness = 1;
-        if (elapsed < 350) car.dataset.phase = 'open';
-        else if (elapsed < 1550) { car.dataset.phase = 'closing'; openness = closeAt((elapsed - 350) / 1200); }
-        else if (elapsed < 1670) {
-          car.dataset.phase = 'closing'; car.dataset.hoodOpen = '0';
-          $('.car-hood', car).style.opacity = '0';
-          if (heroRenderer) { heroRenderer.destroy(); heroRenderer = null; }
-          heroFrame = requestAnimationFrame(animate); return;
-        }
-        else { heroFrame = 0; illuminate(); return; }
-        positionHood(car, openness);
-        heroFrame = requestAnimationFrame(animate);
-      };
-      heroFrame = requestAnimationFrame(animate);
+      heroLightsPlayed = true; controller.play();
     };
-    const ready = () => {
-      if (!car.isConnected) return;
-      if (engineReady) {
-        try { heroRenderer = window.WHHood?.create({ canvas: $('.hood-mesh', car), photo: $('img', car), underside }); } catch { heroRenderer = null; }
-        engineReady = Boolean(heroRenderer);
-        if (engineReady) {
-          $('.hood-mesh', car).addEventListener('webglcontextlost', (event) => {
-            event.preventDefault();
-            if (!car.isConnected) return;
-            cancelAnimationFrame(heroFrame); heroFrame = 0;
-            settleHero(car);
-          }, { once: true });
-          positionHood(car, 1); car.dataset.phase = 'open';
-          $('.car-hood', car).style.opacity = '1';
-        }
-      }
-      car.classList.remove('hood-loading');
-      if (!('IntersectionObserver' in window)) { start(); return; }
+    controller.prepare().then((ready) => {
+      if (!car.isConnected || controller !== heroRenderer) return;
+      if (!ready) { settleHero(car); return; }
+      if (!('IntersectionObserver' in window)) { play(); return; }
       heroObserver = new IntersectionObserver((entries) => {
-        if (entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.55)) start();
-      }, { threshold: 0.55 });
+        if (entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= .55)) play();
+      }, { threshold: .55 });
       heroObserver.observe(car);
-    };
-    const img = $('img', car);
-    const engine = new Image(); engine.src = 'assets/engine-bay.webp?v=20261024-hood-hinge';
-    const underside = new Image(); underside.src = 'assets/hood-underside.webp?v=20261024-hood-rig';
-    // Decode both textures before moving the hood. A missing engine asset falls back to lights only.
-    const photoReady = img.decode ? img.decode().then(() => true, () => Boolean(img.naturalWidth)) : new Promise((resolve) => {
-      if (img.complete) resolve(Boolean(img.naturalWidth));
-      else { img.onload = () => resolve(true); img.onerror = () => resolve(false); }
     });
-    const decodeTexture = (image) => image.decode ? image.decode().then(() => true, () => false) : new Promise((resolve) => {
-      if (image.complete) resolve(Boolean(image.naturalWidth));
-      else { image.onload = () => resolve(true); image.onerror = () => resolve(false); }
-    });
-    Promise.all([photoReady, decodeTexture(engine), decodeTexture(underside)]).then(([photo, bay, panel]) => { engineReady = bay && panel; if (photo) ready(); });
   }
 
   /* ---------- transient UI state ---------- */
