@@ -80,7 +80,7 @@ html[dir=ltr] .arrow{transform:scaleX(-1)}
 /* offer bar */
 .offer-bar{background:#8d1b23;color:#fff;font-size:14px}
 .offer-bar .wrap{display:flex;gap:10px 16px;align-items:center;justify-content:center;flex-wrap:wrap;padding-block:8px;text-align:center}
-.offer-bar b{font-weight:700}
+.offer-bar b{font-weight:700;line-height:0}
 .offer-bar a{color:inherit;font-weight:700;text-underline-offset:3px}
 
 /* header */

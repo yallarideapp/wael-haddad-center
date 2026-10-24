@@ -246,15 +246,34 @@
       };
       if (!engineReady) { illuminate(); return; }
       let elapsed = 0, previous;
-      const ease = (t) => t * t * (3 - 2 * t);
+      // Monotone angle profile estimated from the clip; body/camera motion is excluded.
+      const closing = [1, .96, .80, .61, .43, .27, .13, .04, 0];
+      const slopes = closing.map((value, i) => {
+        if (!i || i === closing.length - 1) return 0;
+        const before = value - closing[i - 1], after = closing[i + 1] - value;
+        return 2 * before * after / (before + after);
+      });
+      const closeAt = (progress) => {
+        const step = Math.min(progress * (closing.length - 1), closing.length - 1);
+        const i = Math.min(Math.floor(step), closing.length - 2), t = step - i;
+        const t2 = t*t, t3 = t2*t;
+        return (2*t3-3*t2+1)*closing[i] + (t3-2*t2+t)*slopes[i]
+          + (-2*t3+3*t2)*closing[i+1] + (t3-t2)*slopes[i+1];
+      };
       const animate = (now) => {
         if (!car.isConnected) return;
         if (reduceMotion()) { settleHero(car); return; }
         if (previous !== undefined && !document.hidden) elapsed += Math.min(now - previous, 80);
         previous = now;
         let openness = 1;
-        if (elapsed < 1300) car.dataset.phase = 'open';
-        else if (elapsed < 3100) { car.dataset.phase = 'closing'; openness = 1 - ease((elapsed - 1300) / 1800); }
+        if (elapsed < 2000) car.dataset.phase = 'open';
+        else if (elapsed < 4000) { car.dataset.phase = 'closing'; openness = closeAt((elapsed - 2000) / 2000); }
+        else if (elapsed < 4200) {
+          car.dataset.phase = 'closing'; car.dataset.hoodOpen = '0';
+          $('.car-hood', car).style.opacity = '0';
+          if (heroRenderer) { heroRenderer.destroy(); heroRenderer = null; }
+          heroFrame = requestAnimationFrame(animate); return;
+        }
         else { heroFrame = 0; illuminate(); return; }
         positionHood(car, openness);
         heroFrame = requestAnimationFrame(animate);

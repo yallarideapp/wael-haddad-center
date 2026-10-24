@@ -60,3 +60,5 @@
 - [صورة جانبية لدى mcchip-dkr](https://mcchip-dkr.com/performance-upgrades/audi-a5-b8-rs5-4-2-v8-fsi-stufe-3-mc580-580-ps-565-nm).
 - [جلسة تصوير RS5 لدى Nick’s Car Blog](https://www.nickscarblog.com/featured-rides/johns-sepang-blue-rs5).
 - [جلسة تصوير RS5 لدى Autogespot](https://www.autogespot.com/photoshoot%3A-audi-rs5).
+
+توقيت الإغلاق اللاحق مستلهم من فيديو مرجعي أرسله صاحب المشروع: وقفة مفتوحة ثانيتين، نزول تدريجي نحو ثانيتين، ثم استقرار قبل المصابيح. استُخدمت حركة الغطاء فقط؛ تظل صورة السيارة وموضعها وحجمها والعجلات ثابتة. الفيديو نفسه ليس أصلاً مطلوباً لتشغيل الموقع ولا يُضمّن في حزمة التسليم.

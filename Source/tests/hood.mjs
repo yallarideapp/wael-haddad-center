@@ -42,7 +42,8 @@ await suite.run(async (browser) => {
         const car = document.querySelector('#hero-car');
         const sample = () => {
           if (!car.isConnected) return;
-          window.hoodSamples.push({ phase: car.dataset.phase, open: Number(car.dataset.hoodOpen || 0), lights: getComputedStyle(car.querySelector('.lamp')).opacity });
+          const photo = car.querySelector('img').getBoundingClientRect();
+          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, open: Number(car.dataset.hoodOpen || 0), lights: getComputedStyle(car.querySelector('.lamp')).opacity, body: [photo.x, photo.y, photo.width, photo.height] });
           if (car.dataset.phase !== 'complete') requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
@@ -50,11 +51,18 @@ await suite.run(async (browser) => {
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
       await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.hero-specialism')).opacity) > .99);
       const painted = await paintedHoodBounds(page);
+      // These pixels contain the wheels and lower body, outside the bonnet and LEDs.
+      const fixedBodyClip = await page.locator('#hero-car > img').evaluate((photo) => {
+        const box = photo.getBoundingClientRect();
+        return { x: box.x, y: box.y + box.height*.58, width: box.width, height: box.height*.31 };
+      });
+      const bodyBefore = await page.screenshot({ clip: fixedBodyClip });
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-open.png`) });
       suite.check(`${device} rendered open hood rises above the roof`, painted && painted.painted > 10000 && painted.top <= 80, painted);
       suite.check(`${device} rendered open hood has clear space inside every frame edge`, painted && painted.left > 2 && painted.right < painted.width - 2 && painted.top > 2 && painted.bottom < painted.height - 2, painted);
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing' && Number(document.querySelector('#hero-car').dataset.hoodOpen) < .55);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-closing.png`) });
+      const bodyDuring = await page.screenshot({ clip: fixedBodyClip });
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing' && Number(document.querySelector('#hero-car').dataset.hoodOpen) < .2);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-settling.png`) });
       await waitForSteadyLights(page);
@@ -66,6 +74,14 @@ await suite.run(async (browser) => {
       suite.check(`${device} hood moves through intermediate positions`, samples.find((s) => s.phase === 'open')?.open === 1 && samples.some((s) => s.phase === 'closing' && s.open > .2 && s.open < .8));
       suite.check(`${device} starts fully open and never reopens`, samples.filter((s) => s.phase === 'open' || s.phase === 'closing').every((s, i, sequence) => !i || s.open <= sequence[i - 1].open));
       suite.check(`${device} lamps stay off until the hood closes`, samples.filter((s) => ['open', 'closing'].includes(s.phase)).every((s) => Number(s.lights) === 0));
+      const bodyFrames = samples.filter((s) => ['open', 'closing', 'lights', 'complete'].includes(s.phase));
+      const shiftedBody = bodyFrames.find((s) => s.body.some((value, i) => Math.abs(value-bodyFrames[0].body[i]) >= .1));
+      suite.check(`${device} car position and scale remain fixed throughout closure`, !shiftedBody, { initial: bodyFrames[0], shifted: shiftedBody });
+      suite.check(`${device} wheel and body pixels are unchanged while the bonnet moves`, bodyBefore.equals(bodyDuring));
+      const opened = samples.find((s) => s.phase === 'open'), closing = samples.find((s) => s.phase === 'closing');
+      const seated = samples.find((s) => s.phase === 'closing' && s.open === 0), lights = samples.find((s) => s.phase === 'lights');
+      const timing = opened && closing && seated && lights ? { hold: closing.time-opened.time, descent: seated.time-closing.time, seated: lights.time-seated.time } : null;
+      suite.check(`${device} reference pace holds open, lowers for two seconds, then seats before lights`, timing && timing.hold >= 1800 && timing.hold <= 2400 && timing.descent >= 1850 && timing.descent <= 2600 && timing.seated >= 120 && timing.seated <= 450, timing);
       suite.check(`${device} final state hides the moving hood and engine layers`, await page.locator('.car-hood').evaluate((el) => getComputedStyle(el).display === 'none' && Boolean(el.querySelector('.hood-mesh'))));
     } finally { await context.close(); }
   }
