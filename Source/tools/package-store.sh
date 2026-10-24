@@ -12,7 +12,7 @@ SLUG="wael-haddad"
 DELIVERY_PARENT="$ROOT/$NAME-complete-with-demo"
 DELIVERY="$DELIVERY_PARENT/$NAME"
 WORK="$ROOT/.package-tmp"
-RUNTIME=(index.html styles.css data.js app.js admin.js assets/favicon.svg assets/coupe-studio.webp assets/coupe-studio-mobile.webp assets/engine-bay.webp assets/hood-underside.webp assets/audi-rings.svg assets/volkswagen-emblem.svg assets/porsche-crest.png)
+RUNTIME=(index.html styles.css data.js hood-motion.js app.js admin.js assets/favicon.svg assets/coupe-studio.webp assets/coupe-studio-mobile.webp assets/engine-bay.webp assets/hood-underside.webp assets/audi-rings.svg assets/volkswagen-emblem.svg assets/porsche-crest.png)
 
 inside() { case "$1" in "$ROOT"/*) return 0;; *) echo "Refusing path outside the project: $1" >&2; exit 1;; esac; }
 for p in "$DELIVERY_PARENT" "$WORK" "$ROOT/Demo"; do inside "$p"; done
@@ -21,7 +21,7 @@ for f in "${RUNTIME[@]}"; do [ -f "$SOURCE/$f" ] || { echo "Missing Source/$f" >
 grep -q "^  mode: 'demo',$" "$SOURCE/data.js" || { echo "Source/data.js must keep  mode: 'demo',  (the package script switches it for Hostinger)" >&2; exit 1; }
 
 echo "1/7 checks"
-if command -v node >/dev/null; then for f in data.js app.js admin.js; do node --check "$SOURCE/$f"; done; else echo "   (node not installed: syntax check skipped)"; fi
+if command -v node >/dev/null; then for f in data.js hood-motion.js app.js admin.js; do node --check "$SOURCE/$f"; done; else echo "   (node not installed: syntax check skipped)"; fi
 
 echo "2/7 Demo/"
 rm -rf "$ROOT/Demo"; mkdir -p "$ROOT/Demo/assets"

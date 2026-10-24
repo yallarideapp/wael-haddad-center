@@ -3,6 +3,34 @@ import { createSuite, navigate, newContext, waitForSteadyLights } from './helper
 
 const suite = createSuite('hood');
 
+// Read the rendered hood once, immediately after the animation's frame. Element
+// bounds alone cannot catch a transparent, clipped, or incorrectly placed mesh.
+async function paintedHoodBounds(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      const canvas = document.querySelector('.hood-mesh');
+      const gl = canvas?.getContext('webgl');
+      if (!gl) { resolve(null); return; }
+      const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+      const pixels = new Uint8Array(width * height * 4);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      let left = width, top = height, right = -1, bottom = -1, painted = 0;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if (pixels[(y * width + x) * 4 + 3] < 32) continue;
+        const imageY = height - y - 1;
+        left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, imageY); bottom = Math.max(bottom, imageY);
+        painted++;
+      }
+      resolve({
+        left, right,
+        top, bottom,
+        painted, width, height
+      });
+    });
+  }));
+}
+
 await suite.run(async (browser) => {
   for (const [device, width, height] of [['phone', 390, 664], ['desktop', 1366, 768]]) {
     const context = await newContext(browser, { viewport: { width, height } });
@@ -21,11 +49,10 @@ await suite.run(async (browser) => {
       });
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
       await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.hero-specialism')).opacity) > .99);
+      const painted = await paintedHoodBounds(page);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-open.png`) });
-      suite.check(`${device} raised hood stays inside its car frame`, await page.locator('.hood-panel').evaluate((panel) => {
-        const bounds = panel.querySelector('.hood-underside').getBoundingClientRect(), frame = panel.closest('.hero-car').getBoundingClientRect();
-        return bounds.left >= frame.left - 1 && bounds.right <= frame.right + 1 && bounds.top >= frame.top - 1;
-      }));
+      suite.check(`${device} rendered open hood rises above the roof`, painted && painted.painted > 10000 && painted.top <= 80, painted);
+      suite.check(`${device} rendered open hood has clear space inside every frame edge`, painted && painted.left > 2 && painted.right < painted.width - 2 && painted.top > 2 && painted.bottom < painted.height - 2, painted);
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing' && Number(document.querySelector('#hero-car').dataset.hoodOpen) < .55);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-closing.png`) });
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing' && Number(document.querySelector('#hero-car').dataset.hoodOpen) < .2);
@@ -39,7 +66,7 @@ await suite.run(async (browser) => {
       suite.check(`${device} hood moves through intermediate positions`, samples.find((s) => s.phase === 'open')?.open === 1 && samples.some((s) => s.phase === 'closing' && s.open > .2 && s.open < .8));
       suite.check(`${device} starts fully open and never reopens`, samples.filter((s) => s.phase === 'open' || s.phase === 'closing').every((s, i, sequence) => !i || s.open <= sequence[i - 1].open));
       suite.check(`${device} lamps stay off until the hood closes`, samples.filter((s) => ['open', 'closing'].includes(s.phase)).every((s) => Number(s.lights) === 0));
-      suite.check(`${device} final state removes the moving layers`, await page.locator('.car-hood').evaluate((el) => getComputedStyle(el).display === 'none' && !el.querySelector('.hood-panel').hasAttribute('style')));
+      suite.check(`${device} final state hides the moving hood and engine layers`, await page.locator('.car-hood').evaluate((el) => getComputedStyle(el).display === 'none' && Boolean(el.querySelector('.hood-mesh'))));
     } finally { await context.close(); }
   }
 
@@ -54,7 +81,8 @@ await suite.run(async (browser) => {
     suite.check('slow hood image never flashes a closed car first', await page.locator('#hero-car').evaluate((car) => car.classList.contains('hood-loading') && getComputedStyle(car).opacity === '0'));
     release();
     await page.waitForFunction(() => !document.querySelector('#hero-car').classList.contains('hood-loading'));
-    suite.check('first visible pose is already open after the textures decode', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'open' && car.dataset.hoodOpen === '1.000' && getComputedStyle(car.querySelector('.hood-underside')).display !== 'none'));
+    const painted = await paintedHoodBounds(page);
+    suite.check('first visible pose is already painted open after the textures decode', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'open' && car.dataset.hoodOpen === '1.000' && getComputedStyle(car).opacity === '1') && painted && painted.painted > 10000 && painted.top <= 80, painted);
   } finally { await loading.close(); }
 
   const interrupted = await newContext(browser);
@@ -92,4 +120,28 @@ await suite.run(async (browser) => {
     await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
     suite.check('an unavailable engine texture falls back to the closed car and lights', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
   } finally { await fallback.close(); }
+
+  const noWebGL = await newContext(browser);
+  try {
+    await noWebGL.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (kind, ...options) {
+        return kind === 'webgl' ? null : original.call(this, kind, ...options);
+      };
+    });
+    const page = await noWebGL.newPage(); suite.watch(page, 'WebGL unavailable');
+    await navigate(page, suite.url());
+    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
+    suite.check('WebGL unavailable falls back to the visible closed car and steady lights', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && !car.classList.contains('hood-loading') && getComputedStyle(car).opacity === '1' && car.querySelector('img').naturalWidth > 0 && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
+  } finally { await noWebGL.close(); }
+
+  const lostWebGL = await newContext(browser);
+  try {
+    const page = await lostWebGL.newPage(); suite.watch(page, 'WebGL context loss');
+    await navigate(page, suite.url());
+    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
+    await page.locator('.hood-mesh').evaluate((canvas) => canvas.getContext('webgl').getExtension('WEBGL_lose_context').loseContext());
+    await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'complete');
+    suite.check('losing the drawing context immediately restores the complete closed car', await page.locator('#hero-car').evaluate((car) => car.classList.contains('lights-on') && getComputedStyle(car.querySelector('.car-hood')).display === 'none'));
+  } finally { await lostWebGL.close(); }
 });
