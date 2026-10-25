@@ -5,8 +5,8 @@ const suite = createSuite('hood');
 const mediaPattern = '**/assets/car-hood-animation.mp4*';
 const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-hood-(?:animation\.mp4|frames-\d\.webp))/.test(url);
 
-// Build an independent reference from the static photograph plus the first
-// photographic overlay cell; the timing video supplies no visible pixels.
+// Check the runtime compositor against decoded source cells independently of
+// its draw loop; the timing video supplies no visible pixels.
 async function firstFramePixels(page) {
   return page.evaluate(async () => {
     const car = document.querySelector('#hero-car'), canvas = car.querySelector('#rs5HeroCanvas'), video = car.querySelector('.rs5-source');
@@ -45,13 +45,12 @@ async function finalFramePixels(page) {
     const reference = document.createElement('canvas'); reference.width = 1080; reference.height = 600;
     const ctx = reference.getContext('2d'); ctx.drawImage(poster, 0, 0, 1080, 600);
     const expected = ctx.getImageData(0, 0, 1080, 600).data;
-    // Interior body regions stay outside the bonnet and headlamp effects.
+    // Interior body regions stay outside the recorded front of the car.
     // Require opaque photographic detail, so empty transparent pixels cannot pass.
     const staticRegions = [
-      { name: 'grille', box: [220, 370, 120, 60] },
-      { name: 'front wheel', box: [620, 390, 50, 90] },
-      { name: 'rear wheel', box: [932, 395, 30, 55] },
-      { name: 'door', box: [745, 360, 110, 50] }
+      { name: 'front wheel', box: [587, 353, 70, 102] },
+      { name: 'rear wheel', box: [916, 339, 32, 78] },
+      { name: 'door', box: [750, 300, 110, 80] }
     ].map((region) => ({ ...region, opaque: 0, changed: 0, maxDifference: 0 }));
     let posterError = 0, alphaError = 0, changed = 0, alphaChanged = 0, transparent = 0, cornerAlpha = 0, hash = 2166136261;
     for (let i = 0; i < actual.length; i += 4) {
@@ -117,7 +116,7 @@ await suite.run(async (browser) => {
       release();
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
       const first = await firstFramePixels(page);
-      suite.check(`${device} first visible pose matches the original photograph plus its first RGBA motion overlay`, first.width === 1080 && first.height === 600 && first.baseWidth === 1080 && first.baseHeight === 600 && first.atlasWidth === 3240 && first.atlasHeight === 2400 && first.videoWidth === 720 && first.videoHeight === 400 && first.meanError < .5 && first.alphaMeanError < .5 && first.dynamicRange > 100 && first.frame === 'video' && first.phase === 'open' && first.frameIndex === 0, first);
+      suite.check(`${device} first visible pose matches the fixed body parts plus the first recorded front frame`, first.width === 1080 && first.height === 600 && first.baseWidth === 1080 && first.baseHeight === 600 && first.atlasWidth === 3240 && first.atlasHeight === 2400 && first.videoWidth === 720 && first.videoHeight === 400 && first.meanError < .5 && first.alphaMeanError < .5 && first.dynamicRange > 100 && first.frame === 'video' && first.phase === 'open' && first.frameIndex === 0, first);
       suite.check(`${device} open car has transparent corners and foreground rather than a rectangular matte`, first.cornerAlpha === 0 && first.transparentFraction > .2 && first.opaqueFraction > .06 && first.opaqueFraction < .8, first);
       suite.check(`${device} open pose pauses briefly before mechanical closure`, first.paused, first);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-open.png`) });
@@ -126,23 +125,34 @@ await suite.run(async (browser) => {
       await waitForSteadyLights(page);
       const final = await finalFramePixels(page);
       await page.screenshot({ path: resolve(suite.output, `${device}-lights-on.png`) });
-      const middleShape = await page.evaluate(async () => {
+      const middleFront = await page.evaluate(async () => {
         const atlas = new Image(); atlas.src = new URL('assets/car-hood-frames-3.webp', document.baseURI).href;
         await atlas.decode();
         const image = document.createElement('canvas'); image.width = 1080; image.height = 600;
         const ctx = image.getContext('2d'); ctx.drawImage(atlas, 0, 1200, 1080, 600, 0, 0, 1080, 600);
         const pixels = ctx.getImageData(0, 0, 1080, 600).data;
-        let opaque = 0, left = 1080, right = 0, top = 600, bottom = 0;
-        for (let y = 0; y < 600; y++) for (let x = 0; x < 1080; x++) {
-          if (pixels[(y * 1080 + x) * 4 + 3] <= 200) continue;
-          opaque++; left = Math.min(left, x); right = Math.max(right, x);
-          top = Math.min(top, y); bottom = Math.max(bottom, y);
-        }
-        return { opaque, width: right-left+1, height: bottom-top+1, fill: opaque / ((right-left+1) * (bottom-top+1)) };
+        // These photographic areas must travel with the bonnet. A small hood
+        // cutout above a separately invented bay cannot satisfy this contract.
+        // This is a content/coverage check, not a claim of visual realism.
+        return [
+          { name: 'engine bay', box: [240, 250, 180, 30] },
+          { name: 'cowl', box: [470, 205, 100, 25] },
+          { name: 'grille', box: [220, 330, 120, 70] }
+        ].map((region) => {
+          const [left, top, width, height] = region.box;
+          let opaque = 0, min = 255, max = 0;
+          for (let y = top; y < top + height; y++) for (let x = left; x < left + width; x++) {
+            const i = (y * 1080 + x) * 4;
+            if (pixels[i + 3] <= 240) continue;
+            opaque++;
+            for (let c = 0; c < 3; c++) { min = Math.min(min, pixels[i + c]); max = Math.max(max, pixels[i + c]); }
+          }
+          return { name: region.name, opaqueFraction: opaque / (width * height), dynamicRange: max - min };
+        });
       });
-      suite.check(`${device} recorded mid-close bonnet retains its broad curved silhouette`, middleShape.opaque > 8000 && middleShape.opaque < 20000 && middleShape.fill > .45 && middleShape.fill < .9 && middleShape.height < 70, middleShape);
+      suite.check(`${device} recorded mid-close front includes photographic bay, cowl, and grille together`, middleFront.every((region) => region.opaqueFraction > .95 && region.dynamicRange > 8), middleFront);
       suite.check(`${device} sequence changes both car pixels and the open-to-closed silhouette`, final.changedFraction > .025 && final.alphaChangedFraction > .005, final);
-      suite.check(`${device} original grille, wheels, and door remain pixel-identical during closure`, final.staticRegions.every((region) => region.changed === 0 && region.opaque > region.box[2] * region.box[3] * .9), final.staticRegions);
+      suite.check(`${device} sharp wheels and door remain pixel-identical during closure`, final.staticRegions.every((region) => region.changed === 0 && region.opaque > region.box[2] * region.box[3] * .9), final.staticRegions);
       suite.check(`${device} final atlas cell agrees with the transparent lit poster`, final.posterMeanError < 3 && final.alphaMeanError < 1 && final.cornerAlpha === 0 && final.transparentFraction > .2, final);
       suite.check(`${device} timing video stops with the final RGBA frame selected`, final.frameIndex === 47 && final.paused && Number.isFinite(final.duration) && final.duration >= 2.4 && final.duration <= 2.6 && final.videoTime >= final.duration - .15 && final.videoTime <= final.duration + .01, final);
       await page.waitForTimeout(220);
@@ -195,11 +205,11 @@ await suite.run(async (browser) => {
     await navigate(page, suite.url());
     await Promise.race([seen, new Promise((_, reject) => setTimeout(() => reject(new Error('No car photograph load was started')), 5000))]);
     await page.waitForFunction(() => document.querySelector('.rs5-source').readyState >= 2);
-    suite.check('decoded timing video cannot reveal a hood overlay before its base photograph is ready', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'loading' && Number(getComputedStyle(car).opacity) === 0));
+    suite.check('decoded timing video cannot reveal the recorded front before the fixed body parts are ready', await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'loading' && Number(getComputedStyle(car).opacity) === 0));
     releaseBase();
     await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
     const painted = await firstFramePixels(page);
-    suite.check('the first visible car waits for both decoded photograph and motion overlay', painted.phase === 'open' && painted.meanError < .5 && painted.alphaMeanError < .5 && painted.opaqueFraction > .06, painted);
+    suite.check('the first visible car waits for both decoded body parts and recorded front', painted.phase === 'open' && painted.meanError < .5 && painted.alphaMeanError < .5 && painted.opaqueFraction > .06, painted);
   } finally { if (releaseBase) releaseBase(); await loadingBase.close(); }
 
   const interrupted = await newContext(browser);

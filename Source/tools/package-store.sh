@@ -13,7 +13,7 @@ DELIVERY_PARENT="$ROOT/$NAME-complete-with-demo"
 DELIVERY="$DELIVERY_PARENT/$NAME"
 WORK="$ROOT/.package-tmp"
 RUNTIME=(index.html styles.css data.js hood-motion.js app.js admin.js assets/favicon.svg assets/car-hood-animation.mp4 assets/car-studio-base.webp assets/car-hood-open.webp assets/car-hood-closed.webp assets/car-hood-frames-1.webp assets/car-hood-frames-2.webp assets/car-hood-frames-3.webp assets/car-hood-frames-4.webp assets/audi-rings.svg assets/volkswagen-emblem.svg assets/porsche-crest.png)
-SOURCE_ONLY=(assets/coupe-studio.webp assets/car-studio-open.webp assets/hood-reference.webp tools/render-car-frames.py tools/car-hood-calibration.json)
+SOURCE_ONLY=(assets/coupe-studio.webp assets/car-body-aligned.webp assets/hood-reference.webp tools/render-car-frames.py tools/car-hood-calibration.json)
 
 inside() { case "$1" in "$ROOT"/*) return 0;; *) echo "Refusing path outside the project: $1" >&2; exit 1;; esac; }
 for p in "$DELIVERY_PARENT" "$WORK" "$ROOT/Demo"; do inside "$p"; done

@@ -80,7 +80,7 @@
     };
 
     // Video supplies the clock; each timestamp selects a photographic motion
-    // overlay while the full-resolution car body stays fixed beneath it.
+    // front while the photographic wheels, doors and rear body stay fixed.
     // A redundant seek on a non-seekable response can jump back to the start.
     // The seeked path is only needed if completion precedes the ended state.
     const freezeLastFrame = () => {
