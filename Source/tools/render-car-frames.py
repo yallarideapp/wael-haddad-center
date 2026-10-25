@@ -7,7 +7,7 @@ Hood, engine, cowl and front fascia retain their recorded geometry together.
 import argparse
 import json
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
 SOURCE = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -72,6 +72,32 @@ for part in range(4):
         frames[part*12+cell] = Image.alpha_composite(base, layer)
 for label, index in [('open', 0), ('closed', cal['count']-1)]:
     frames[index].save(args.output / f'car-hood-{label}.webp', lossless=True, method=6)
+
+# The running-light state follows the closed, unlit recorded pose. Preserve
+# dark projector bowls; only their narrow surrounding LED strips emit light.
+scale = 4
+mask = Image.new('L', (size[0]*scale, size[1]*scale))
+draw = ImageDraw.Draw(mask)
+for name, points in cal['led_paths'].items():
+    points = [(round(x*scale), round(y*scale)) for x, y in points]
+    width = round((2.25 if name == 'near' else 1.45)*scale)
+    draw.line(points, fill=255, width=width, joint='curve')
+    for x, y in [points[0], points[-1]]:
+        draw.ellipse((x-width/2, y-width/2, x+width/2, y+width/2), fill=255)
+mask = mask.resize(size, Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(.28))
+glow = mask.filter(ImageFilter.GaussianBlur(3))
+unlit = frames[-2]
+rgb = unlit.convert('RGB')
+emission = Image.merge('RGB', (glow.point(lambda n: round(n*.63)),
+                               glow.point(lambda n: round(n*.8)), glow))
+lit = ImageChops.screen(rgb, emission)
+lit = Image.composite(Image.new('RGB', size, (223, 242, 255)), lit,
+                       mask.point(lambda n: round(n*.8)))
+red, green, blue = ImageChops.difference(rgb, lit).split()
+changed = ImageChops.lighter(ImageChops.lighter(red, green), blue).point(lambda n: 255 if n else 0)
+alpha = ImageChops.multiply(changed, unlit.getchannel('A'))
+led = Image.merge('RGBA', (*lit.split(), alpha))
+led.save(args.output / 'car-led.webp', lossless=True, method=6)
 if args.review:
     args.review.mkdir(parents=True, exist_ok=True)
     contact = Image.new('RGB', (2160, 1200), '#302118')
@@ -82,5 +108,8 @@ if args.review:
         bg.alpha_composite(frames[index])
         contact.paste(bg.convert('RGB').resize((720, 400)), ((cell % 3)*720, (cell // 3)*400))
     contact.save(args.review / 'contact.jpg', quality=96)
+    unlit.save(args.review / 'lights-off.png')
+    Image.alpha_composite(unlit, led).save(args.review / 'lights-led.png')
+    frames[-1].save(args.review / 'lights-headlights.png')
 print(json.dumps({'frames': len(frames), 'size': size, 'base': cal['body'],
                   'reference': reference_path.name, 'geometry': 'recorded front unchanged'}))

@@ -66,10 +66,13 @@
 
   function create({ canvas, smokeCanvas, video, frames, onPhase, onError }) {
     if (!frames || typeof frames.base !== 'string' || !frames.base.length ||
+        typeof frames.led !== 'string' || !frames.led.length ||
+        !Number.isFinite(frames.ledAt) || !Number.isFinite(frames.headlightsAt) ||
         !Array.isArray(frames.sources) || !frames.sources.length ||
         !frames.sources.every((source) => typeof source === 'string' && source.length > 0) ||
         !['width', 'height', 'columns', 'perSheet', 'count'].every((key) => Number.isInteger(frames[key]) && frames[key] > 0) ||
         !Number.isFinite(frames.fps) || frames.fps <= 0 ||
+        frames.ledAt <= (frames.count - 2) / frames.fps || frames.headlightsAt <= frames.ledAt ||
         frames.perSheet % frames.columns !== 0 ||
         frames.sources.length !== Math.ceil(frames.count / frames.perSheet)) return null;
     let context;
@@ -83,7 +86,7 @@
     let stopped = false, failed = false, prepared = false, requested = false;
     let closing = false, finishing = false, complete = false, preparing;
     let frame = 0, frameIsVideo = false, hold = 0, holdStarted = 0, remaining = 300;
-    let resume = false, playAttempt = 0, base;
+    let resume = false, playAttempt = 0, base, led;
 
     const later = (fn, delay) => {
       const id = setTimeout(() => { timeouts.delete(id); fn(); }, delay);
@@ -118,6 +121,10 @@
         base.onload = null; base.onerror = null;
         base.removeAttribute('src'); base = null;
       }
+      if (led) {
+        led.onload = null; led.onerror = null;
+        led.removeAttribute('src'); led = null;
+      }
     };
     const phase = (name) => { if (!stopped && !failed) onPhase?.(name); };
     const fail = () => {
@@ -130,16 +137,23 @@
     const paint = (mediaTime = video.currentTime) => {
       if (stopped || failed || video.readyState < 2 || !video.videoWidth || !Number.isFinite(mediaTime)) return false;
       try {
-        const index = Math.max(0, Math.min(frames.count - 1, Math.floor(mediaTime * frames.fps + .05)));
+        const lightStage = mediaTime >= frames.headlightsAt ? 'headlights' : mediaTime >= frames.ledAt ? 'led' : 'off';
+        const index = lightStage === 'headlights' ? frames.count - 1 :
+          Math.max(0, Math.min(frames.count - 2, Math.floor(mediaTime * frames.fps + .05)));
         const atlas = atlases[Math.floor(index / frames.perSheet)], cell = index % frames.perSheet;
-        if (!base?.naturalWidth || !atlas?.naturalWidth) return false;
+        if (!base?.naturalWidth || !atlas?.naturalWidth || !led?.naturalWidth) return false;
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.drawImage(base, 0, 0, canvas.width, canvas.height);
         context.drawImage(atlas, (cell % frames.columns) * frames.width,
           Math.floor(cell / frames.columns) * frames.height, frames.width, frames.height,
           0, 0, canvas.width, canvas.height);
+        if (lightStage === 'led') {
+          context.save(); context.globalAlpha = Math.min(1, (mediaTime - frames.ledAt) / .12);
+          context.drawImage(led, 0, 0, canvas.width, canvas.height); context.restore();
+        }
         canvas.dataset.mediaTime = Number(mediaTime).toFixed(4);
         canvas.dataset.frameIndex = String(index);
+        canvas.dataset.lightStage = lightStage;
         smoke?.paint(mediaTime, index);
         return true;
       } catch (_) { return false; }
@@ -272,6 +286,7 @@
           video.removeEventListener('error', error);
           atlases.forEach((atlas) => { atlas.onload = null; atlas.onerror = null; });
           if (base) { base.onload = null; base.onerror = null; }
+          if (led) { led.onload = null; led.onerror = null; }
           clearLater(timeout); pending.delete(cancel);
         };
         const finish = (ok) => {
@@ -283,13 +298,13 @@
         const cancel = () => finish(false);
         const error = () => finish(false);
         const ready = () => {
-          if (settled || stopped || failed || !videoReady || decoded !== frames.sources.length + 1) return;
+          if (settled || stopped || failed || !videoReady || decoded !== frames.sources.length + 2) return;
           canvas.width = frames.width; canvas.height = frames.height;
           if (!paint()) { finish(false); return; }
           prepared = true; phase('open'); finish(true); scheduleHold();
         };
         const loaded = () => {
-          if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.videoWidth || !video.videoHeight) { finish(false); return; }
+          if (!Number.isFinite(video.duration) || video.duration <= frames.headlightsAt || !video.videoWidth || !video.videoHeight) { finish(false); return; }
           videoReady = true; ready();
         };
         const timeout = later(() => finish(false), 10000);
@@ -308,6 +323,18 @@
           else afterDecode();
         };
         base.src = frames.base;
+        led = new Image(); led.decoding = 'async';
+        led.onerror = error;
+        led.onload = () => {
+          const afterDecode = () => {
+            if (settled || stopped || failed) return;
+            if (led.naturalWidth !== frames.width || led.naturalHeight !== frames.height) { finish(false); return; }
+            decoded++; ready();
+          };
+          if (led.decode) led.decode().then(afterDecode, error);
+          else afterDecode();
+        };
+        led.src = frames.led;
         frames.sources.forEach((source, index) => {
           const atlas = new Image(); atlases[index] = atlas; atlas.decoding = 'async';
           atlas.onerror = error;

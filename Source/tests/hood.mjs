@@ -3,7 +3,7 @@ import { createSuite, navigate, newContext, waitForSteadyLights } from './helper
 
 const suite = createSuite('hood');
 const mediaPattern = '**/assets/car-hood-animation.mp4*';
-const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-hood-(?:animation\.mp4|frames-\d\.webp))/.test(url);
+const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-led\.webp|car-hood-(?:animation\.mp4|frames-\d\.webp))/.test(url);
 
 // Check the runtime compositor against decoded source cells independently of
 // its draw loop; the timing video supplies no visible pixels.
@@ -93,22 +93,31 @@ await suite.run(async (browser) => {
     let release;
     try {
       const page = await context.newPage(); suite.watch(page, device);
-      const atlasPaths = new Set(), basePaths = new Set();
+      const atlasPaths = new Set(), basePaths = new Set(), ledPaths = new Set();
       page.on('request', (request) => {
         const path = new URL(request.url()).pathname;
         if (/car-hood-frames-\d\.webp$/.test(path)) atlasPaths.add(path);
         if (/car-studio-base\.webp$/.test(path)) basePaths.add(path);
+        if (/car-led\.webp$/.test(path)) ledPaths.add(path);
       });
       const gate = new Promise((resolveGate) => { release = resolveGate; });
       await page.route(mediaPattern, async (route) => { await gate; await route.continue(); });
       await navigate(page, suite.url());
       await page.evaluate(() => {
         window.hoodSamples = [];
-        const car = document.querySelector('#hero-car'), video = car.querySelector('.rs5-source');
+        window.hoodLightSnapshots = {};
+        const car = document.querySelector('#hero-car'), video = car.querySelector('.rs5-source'), canvas = car.querySelector('#rs5HeroCanvas');
         const sample = () => {
           if (!car.isConnected) return;
           const box = car.getBoundingClientRect();
-          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, frame: car.dataset.frame, frameIndex: Number(car.querySelector('#rs5HeroCanvas').dataset.frameIndex), videoTime: video.currentTime, body: [box.x, box.y, box.width, box.height] });
+          const frameIndex = Number(canvas.dataset.frameIndex), lightStage = canvas.dataset.lightStage;
+          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, frame: car.dataset.frame, frameIndex, lightStage, videoTime: video.currentTime, mediaTime: Number(canvas.dataset.mediaTime), body: [box.x, box.y, box.width, box.height] });
+          // Capture the real rendered light stages while playback advances.
+          // The off and LED states use the same closed pose, so lighting can be
+          // checked without mistaking motion or a frame change for ignition.
+          if ((frameIndex === 46 && lightStage === 'off') || (lightStage === 'led' && Number(canvas.dataset.mediaTime) >= 2.35) || lightStage === 'headlights') {
+            if (!window.hoodLightSnapshots[lightStage]) window.hoodLightSnapshots[lightStage] = { pixels: canvas.getContext('2d').getImageData(0, 0, 1080, 600).data, frameIndex, mediaTime: Number(canvas.dataset.mediaTime) };
+          }
           if (car.dataset.phase !== 'complete') requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
@@ -174,22 +183,49 @@ await suite.run(async (browser) => {
       suite.check(`${device} sequence changes both car pixels and the open-to-closed silhouette`, final.changedFraction > .025 && final.alphaChangedFraction > .005, final);
       suite.check(`${device} sharp wheels and door remain pixel-identical during closure`, final.staticRegions.every((region) => region.changed === 0 && region.opaque > region.box[2] * region.box[3] * .9), final.staticRegions);
       suite.check(`${device} final atlas cell agrees with the transparent lit poster`, final.posterMeanError < 3 && final.alphaMeanError < 1 && final.cornerAlpha === 0 && final.transparentFraction > .2, final);
-      suite.check(`${device} timing video stops with the final RGBA frame selected`, final.frameIndex === 47 && final.paused && Number.isFinite(final.duration) && final.duration >= 2.4 && final.duration <= 2.6 && final.videoTime >= final.duration - .15 && final.videoTime <= final.duration + .01, final);
+      suite.check(`${device} timing video stops with the final RGBA frame selected`, final.frameIndex === 47 && final.paused && Number.isFinite(final.duration) && final.duration >= 3.4 && final.duration <= 3.6 && final.videoTime >= final.duration - .15 && final.videoTime <= final.duration + .01, final);
       await page.waitForTimeout(220);
       const frozen = await finalFramePixels(page);
       suite.check(`${device} final frame remains frozen with no loop or later redraw`, frozen.hash === final.hash && frozen.videoTime === final.videoTime && frozen.paused && frozen.phase === 'complete', { final, frozen });
       const samples = await page.evaluate(() => window.hoodSamples);
+      const lightStages = [...new Set(samples.map((sample) => sample.lightStage).filter(Boolean))];
+      const firstLed = samples.find((sample) => sample.lightStage === 'led'), firstHeadlights = samples.find((sample) => sample.lightStage === 'headlights');
+      suite.check(`${device} the closed hood is followed by LED running lights and then headlights`, lightStages.join(',') === 'off,led,headlights' && samples.some((sample) => sample.frameIndex === 46 && sample.lightStage === 'off') && firstLed?.frameIndex === 46 && firstLed.mediaTime >= 2.15 && firstLed.mediaTime < 2.3 && firstHeadlights?.frameIndex === 47 && firstHeadlights.mediaTime >= 2.85 && firstHeadlights.mediaTime < 3 && firstHeadlights.mediaTime - firstLed.mediaTime >= .6, { lightStages, firstLed, firstHeadlights });
+      const lightPixels = await page.evaluate(() => {
+        const snapshots = window.hoodLightSnapshots;
+        if (!['off', 'led', 'headlights'].every((stage) => snapshots[stage])) return { captured: Object.keys(snapshots) };
+        const regions = [
+          { name: 'near LED rail', box: [408, 317, 119, 18], role: 'rail' },
+          { name: 'far LED rail', box: [117, 295, 47, 27], role: 'rail' },
+          { name: 'near projector core', box: [491, 309, 10, 10], role: 'projector' },
+          { name: 'far projector core', box: [135, 302, 6, 5], role: 'projector' }
+        ];
+        const luminance = (pixels, i) => .2126 * pixels[i] + .7152 * pixels[i + 1] + .0722 * pixels[i + 2];
+        return { captured: Object.keys(snapshots), regions: regions.map((region) => {
+          const [left, top, width, height] = region.box;
+          let ledDelta = 0, headlightDelta = 0, ledLit = 0, changed = 0;
+          for (let y = top; y < top + height; y++) for (let x = left; x < left + width; x++) {
+            const i = (y * 1080 + x) * 4;
+            const off = luminance(snapshots.off.pixels, i), led = luminance(snapshots.led.pixels, i), headlights = luminance(snapshots.headlights.pixels, i);
+            ledDelta += Math.abs(led - off); headlightDelta += headlights - off;
+            if (led - off > 18) ledLit++;
+            if (Math.abs(led - off) > 3) changed++;
+          }
+          return { ...region, ledDelta: ledDelta / (width * height), headlightDelta: headlightDelta / (width * height), ledLit, changed };
+        }) };
+      });
+      suite.check(`${device} LED rails brighten while both projector cores stay dark until headlights ignite`, lightPixels.regions?.filter((region) => region.role === 'rail').every((region) => region.ledLit > 10) && lightPixels.regions?.filter((region) => region.role === 'projector').every((region) => region.ledDelta < 2 && region.ledLit === 0 && region.headlightDelta > 20), lightPixels);
       const phases = [...new Set(samples.map((s) => s.phase).filter(Boolean))];
       suite.check(`${device} sequence advances from decoded open frame through closing to complete`, ['open', 'closing', 'complete'].every((phase, index, order) => phases.includes(phase) && (!index || phases.indexOf(phase) > phases.indexOf(order[index - 1]))), phases);
       const indices = samples.filter((sample) => ['open', 'closing', 'complete'].includes(sample.phase)).map((sample) => sample.frameIndex);
-      suite.check(`${device} the base and all four atlases supply advancing frame cells without reversing or replaying`, basePaths.size === 1 && atlasPaths.size === 4 && indices[0] === 0 && indices.at(-1) === 47 && indices.some((index) => index > 11 && index < 36) && indices.every((index, position) => Number.isInteger(index) && index >= 0 && index <= 47 && (!position || index >= indices[position - 1])), { base: [...basePaths], atlases: [...atlasPaths], indices: [...new Set(indices)] });
+      suite.check(`${device} the base, LED layer, and four atlases load once with no frame reversal or replay`, basePaths.size === 1 && ledPaths.size === 1 && atlasPaths.size === 4 && indices[0] === 0 && indices.at(-1) === 47 && indices.some((index) => index > 11 && index < 36) && indices.every((index, position) => Number.isInteger(index) && index >= 0 && index <= 47 && (!position || index >= indices[position - 1])), { base: [...basePaths], led: [...ledPaths], atlases: [...atlasPaths], indices: [...new Set(indices)] });
       const moving = samples.filter((sample) => ['open', 'closing', 'complete'].includes(sample.phase));
       const shifted = moving.find((sample) => sample.body.some((value, index) => Math.abs(value - moving[0].body[index]) >= .1));
       suite.check(`${device} canvas stage position and dimensions remain fixed throughout playback`, moving.length > 10 && !shifted, { initial: moving[0], shifted });
       const opened = samples.find((sample) => sample.phase === 'open'), closing = samples.find((sample) => sample.phase === 'closing'), complete = samples.find((sample) => sample.phase === 'complete');
       const timing = opened && closing && complete ? { hold: closing.time - opened.time, playback: complete.time - closing.time } : null;
-      suite.check(`${device} holds the initial frame for 300ms and plays the 2.5-second crop once`, timing && timing.hold >= 200 && timing.hold <= 700 && timing.playback >= 2200 && timing.playback <= 3500, timing);
-      suite.check(`${device} uses transparent raster frames without a mask, matte, mesh, or LED overlay`, await page.locator('#hero-car').evaluate((car) => {
+      suite.check(`${device} holds the initial frame for 300ms and plays the 3.5-second sequence once`, timing && timing.hold >= 200 && timing.hold <= 700 && timing.playback >= 3200 && timing.playback <= 4500, timing);
+      suite.check(`${device} uses transparent raster frames without a stage mask, matte, or hood mesh`, await page.locator('#hero-car').evaluate((car) => {
         const canvasStyle = getComputedStyle(car.querySelector('#rs5HeroCanvas')), stageStyle = getComputedStyle(car);
         return !car.querySelector('.hood-mesh,.car-hood,.car-engine,.car-lights') && canvasStyle.clipPath === 'none' && stageStyle.maskImage === 'none' && stageStyle.backgroundImage === 'none' && stageStyle.backgroundColor === 'rgba(0, 0, 0, 0)';
       }));
@@ -265,7 +301,7 @@ await suite.run(async (browser) => {
     let requests = 0;
     page.on('request', (request) => { if (isMotionAsset(request.url())) requests++; });
     await navigate(page, suite.url()); await waitForSteadyLights(page);
-    suite.check('reduced motion shows a decoded final photograph without fetching video, base, or frame atlases', requests === 0 && await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
+    suite.check('reduced motion shows a decoded final photograph without fetching video, base, LED layer, or frame atlases', requests === 0 && await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
   } finally { await reduced.close(); }
 
   const changedPreference = await newContext(browser);
@@ -278,7 +314,7 @@ await suite.run(async (browser) => {
     suite.check('enabling reduced motion during closure immediately stops video on the final poster', await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.querySelector('.rs5-source').paused));
   } finally { await changedPreference.close(); }
 
-  for (const failure of ['missing', 'corrupt', 'missing base', 'missing atlas', 'autoplay']) {
+  for (const failure of ['missing', 'corrupt', 'missing base', 'missing atlas', 'missing LED', 'autoplay']) {
     const context = await newContext(browser);
     try {
       if (failure === 'autoplay') await context.addInitScript(() => { HTMLMediaElement.prototype.play = function () { return Promise.reject(Object.assign(new Error('Playback intentionally blocked'), { name: 'NotAllowedError' })); }; });
@@ -287,6 +323,7 @@ await suite.run(async (browser) => {
       if (failure === 'corrupt') await page.route(mediaPattern, (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: Buffer.from('invalid media') }));
       if (failure === 'missing base') await page.route('**/assets/car-studio-base.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
       if (failure === 'missing atlas') await page.route('**/assets/car-hood-frames-2.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
+      if (failure === 'missing LED') await page.route('**/assets/car-led.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
       await navigate(page, suite.url()); await waitForSteadyLights(page);
       suite.check(`${failure} media safely resolves to the visible final photograph`, await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && car.classList.contains('lights-on') && !car.classList.contains('hood-loading') && car.querySelector('.rs5-source').paused));
     } finally { await context.close(); }
