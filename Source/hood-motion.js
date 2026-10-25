@@ -1,9 +1,10 @@
-/* Draw transparent frames of the supplied footage without deforming its bonnet. */
+/* Play prepared photographic car frames, then retain their final pose. */
 (() => {
   'use strict';
 
   function create({ canvas, video, frames, onPhase, onError }) {
-    if (!frames || !Array.isArray(frames.sources) || !frames.sources.length ||
+    if (!frames || typeof frames.base !== 'string' || !frames.base.length ||
+        !Array.isArray(frames.sources) || !frames.sources.length ||
         !frames.sources.every((source) => typeof source === 'string' && source.length > 0) ||
         !['width', 'height', 'columns', 'perSheet', 'count'].every((key) => Number.isInteger(frames[key]) && frames[key] > 0) ||
         !Number.isFinite(frames.fps) || frames.fps <= 0 ||
@@ -18,7 +19,7 @@
     let stopped = false, failed = false, prepared = false, requested = false;
     let closing = false, finishing = false, complete = false, preparing;
     let frame = 0, frameIsVideo = false, hold = 0, holdStarted = 0, remaining = 300;
-    let resume = false, playAttempt = 0;
+    let resume = false, playAttempt = 0, base;
 
     const later = (fn, delay) => {
       const id = setTimeout(() => { timeouts.delete(id); fn(); }, delay);
@@ -48,6 +49,10 @@
         atlas.removeAttribute('src');
       });
       atlases.length = 0;
+      if (base) {
+        base.onload = null; base.onerror = null;
+        base.removeAttribute('src'); base = null;
+      }
     };
     const phase = (name) => { if (!stopped && !failed) onPhase?.(name); };
     const fail = () => {
@@ -62,8 +67,9 @@
       try {
         const index = Math.max(0, Math.min(frames.count - 1, Math.floor(mediaTime * frames.fps + .05)));
         const atlas = atlases[Math.floor(index / frames.perSheet)], cell = index % frames.perSheet;
-        if (!atlas?.naturalWidth) return false;
+        if (!base?.naturalWidth || !atlas?.naturalWidth) return false;
         context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(base, 0, 0, canvas.width, canvas.height);
         context.drawImage(atlas, (cell % frames.columns) * frames.width,
           Math.floor(cell / frames.columns) * frames.height, frames.width, frames.height,
           0, 0, canvas.width, canvas.height);
@@ -73,7 +79,8 @@
       } catch (_) { return false; }
     };
 
-    // Video supplies the playback clock; each timestamp selects a transparent frame.
+    // Video supplies the clock; each timestamp selects a photographic motion
+    // overlay while the full-resolution car body stays fixed beneath it.
     // A redundant seek on a non-seekable response can jump back to the start.
     // The seeked path is only needed if completion precedes the ended state.
     const freezeLastFrame = () => {
@@ -124,7 +131,7 @@
       if (!await freezeLastFrame()) { if (!stopped) fail(); return; }
       if (stopped || failed) return;
       complete = true;
-      // drawImage has copied the final pixels; release decoded sheets on mobile.
+      // drawImage copied the final pixels; release the base and decoded sheets.
       releaseAtlases(); phase('complete');
     };
     const drawFrames = () => {
@@ -198,6 +205,7 @@
           video.removeEventListener('loadeddata', loaded);
           video.removeEventListener('error', error);
           atlases.forEach((atlas) => { atlas.onload = null; atlas.onerror = null; });
+          if (base) { base.onload = null; base.onerror = null; }
           clearLater(timeout); pending.delete(cancel);
         };
         const finish = (ok) => {
@@ -209,7 +217,7 @@
         const cancel = () => finish(false);
         const error = () => finish(false);
         const ready = () => {
-          if (settled || stopped || failed || !videoReady || decoded !== frames.sources.length) return;
+          if (settled || stopped || failed || !videoReady || decoded !== frames.sources.length + 1) return;
           canvas.width = frames.width; canvas.height = frames.height;
           if (!paint()) { finish(false); return; }
           prepared = true; phase('open'); finish(true); scheduleHold();
@@ -222,6 +230,18 @@
         pending.add(cancel);
         video.addEventListener('loadeddata', loaded);
         video.addEventListener('error', error);
+        base = new Image(); base.decoding = 'async';
+        base.onerror = error;
+        base.onload = () => {
+          const afterDecode = () => {
+            if (settled || stopped || failed) return;
+            if (base.naturalWidth !== frames.width || base.naturalHeight !== frames.height) { finish(false); return; }
+            decoded++; ready();
+          };
+          if (base.decode) base.decode().then(afterDecode, error);
+          else afterDecode();
+        };
+        base.src = frames.base;
         frames.sources.forEach((source, index) => {
           const atlas = new Image(); atlases[index] = atlas; atlas.decoding = 'async';
           atlas.onerror = error;

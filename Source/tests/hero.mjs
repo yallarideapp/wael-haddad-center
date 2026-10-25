@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { createSuite, horizontalOverflow, navigate, newContext, waitForFonts, waitForSteadyLights } from './helpers.mjs';
 
 const suite = createSuite('hero');
-const isMotionAsset = (url) => /\/assets\/car-hood-(?:animation\.mp4|frames-\d\.webp)/.test(url);
+const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-hood-(?:animation\.mp4|frames-\d\.webp))/.test(url);
 
 async function heroState(page) {
   return page.evaluate(() => {
@@ -147,7 +147,7 @@ await suite.run(async (browser) => {
     await navigate(reducedPage, suite.url());
     await waitForSteadyLights(reducedPage);
     suite.check('reduced motion keeps text visible without fade or sheen', await reducedPage.locator('.hero h1').evaluate((title) => getComputedStyle(title).animationName === 'none' && Number(getComputedStyle(title).opacity) === 1));
-    suite.check('reduced motion shows the final lit photograph without loading video or atlases', motionRequests === 0 && await reducedPage.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
+    suite.check('reduced motion shows the final lit photograph without loading video, base, or atlases', motionRequests === 0 && await reducedPage.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && !car.querySelector('.rs5-source').currentSrc));
     await reducedPage.screenshot({ path: resolve(suite.output, 'reduced-motion-phone.png') });
   } finally { await reduced.close(); }
 });
