@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare transparent photographic car frames; never runs in the browser.
+"""Fit the recorded hood onto a sharp stationary car; runs only locally.
 
 Requires Pillow, numpy and OpenCV. A full-size body master is optional; the
 checked-in studio WebP is the portable fallback. See MAINTENANCE-AR.md.
@@ -17,6 +17,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--body-photo', type=Path)
 parser.add_argument('--output', type=Path, default=SOURCE / 'assets')
 parser.add_argument('--review', type=Path)
+parser.add_argument('--reference-frames', type=Path,
+                    help='Import the previous 1080 x 600 RGBA frame PNGs (001..047)')
 args = parser.parse_args()
 cv2.setNumThreads(3)
 cal = json.loads((SOURCE / 'tools/car-hood-calibration.json').read_text())
@@ -50,19 +52,32 @@ def extract(photo, mask):
 
 opening = outline(cal['opening_cubics'])
 base = Image.composite(opened, closed, opening)
-top = extract(closed, opening)
-inner = extract(opened, outline(cal['open_mask_cubics']))
-# Detached hardware is drawn between its actual fixed and moving anchors.
-rods = np.zeros((size[1], size[0]), np.uint8)
-cv2.line(rods, (350, 286), (337, 343), 255, 8)
-cv2.line(rods, (978, 286), (1008, 397), 255, 8)
-rods[inner[:, :, 3] < 200] = 0
-inner[:, :, :3] = cv2.inpaint(inner[:, :, :3], rods, 5, cv2.INPAINT_TELEA)
-HC = np.array(cal['H_closed'])
-HS = np.array(cal['H_open_source'])
-p1, p2, p4 = HC.T
-p3 = np.array(cal['p3'])
-inverse_closed, inverse_open = np.linalg.inv(HC), np.linalg.inv(HS)
+reference = cal['reference']
+reference_path = SOURCE / 'assets' / reference['asset']
+if args.reference_frames:
+    sheet = Image.new('RGBA', (reference['width']*reference['columns'],
+                               reference['height']*reference['rows']))
+    for index in range(47):
+        photo = Image.open(args.reference_frames / f'{index+1:03}.png').convert('RGBA')
+        if photo.size != (1080, 600):
+            raise ValueError('Imported reference frames must be 1080 x 600')
+        x, y = reference['x'], reference['y']
+        cropped = photo.crop((x, y, x+reference['width'], y+reference['height']))
+        sheet.paste(cropped, ((index % reference['columns'])*reference['width'],
+                              (index // reference['columns'])*reference['height']))
+    sheet.save(reference_path, lossless=True, method=6)
+reference_sheet = Image.open(reference_path).convert('RGBA')
+if reference_sheet.size != (reference['width']*reference['columns'],
+                              reference['height']*reference['rows']):
+    raise ValueError('Reference sheet dimensions do not match calibration')
+# One fixed registration preserves the recorded curved hood and its motion.
+# There is no reconstructed rotating plane or synthetic face change.
+registration = cv2.getPerspectiveTransform(np.float32(cal['source_quad']),
+                                            np.float32(cal['closed_quad']))
+crop_to_video = np.array([[1/reference['scale'], 0, reference['x']/reference['scale']],
+                           [0, 1/reference['scale'], reference['y']/reference['scale']],
+                           [0, 0, 1]])
+reference_to_body = registration @ crop_to_video
 
 
 def warp(photo, matrix):
@@ -77,24 +92,32 @@ def warp(photo, matrix):
     return Image.fromarray(np.uint8(np.clip(data, 0, 1)*255 + .5))
 
 
-def point(matrix, x, y):
-    value = matrix @ [x, y, 1]
-    return tuple(value[:2] / value[2])
-
-
-def hardware(image, matrix, angle):
-    if angle < 1:
-        return image
-    layer = Image.new('RGBA', size)
-    draw = ImageDraw.Draw(layer)
-    for lower, upper in [((412, 440), (351, 284)), ((1009, 461), (978, 285))]:
-        upper = point(matrix @ inverse_open, *upper)
-        lower = tuple(lower)
-        middle = tuple(.46*np.array(lower) + .54*np.array(upper))
-        draw.line([lower, upper], fill=(9, 11, 12, 255), width=7)
-        draw.line([lower, middle], fill=(63, 68, 69, 255), width=5)
-        draw.line([middle, upper], fill=(166, 173, 171, 255), width=2)
-    return Image.alpha_composite(image, layer)
+def recorded_hood(index):
+    keyframes = cal['hood_outlines']
+    right = next((key for key in keyframes if key['index'] >= index), keyframes[-1])
+    left = next(key for key in reversed(keyframes) if key['index'] <= index)
+    amount = (index-left['index'])/max(1, right['index']-left['index'])
+    points = (1-amount)*np.array(left['points']) + amount*np.array(right['points'])
+    points = points*reference['scale'] - [reference['x'], reference['y']]
+    mask = Image.new('L', (reference['width']*4, reference['height']*4))
+    ImageDraw.Draw(mask).polygon([(round(x*4), round(y*4)) for x, y in points], fill=255)
+    mask = mask.resize((reference['width'], reference['height']), Image.Resampling.LANCZOS)
+    mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(.5))
+    # Retain the real dampers only while they remain exposed in the footage.
+    if index <= 18:
+        near = [(389+13*index/18, 123+24*index/18), (402+9*index/18, 164)]
+        far = [(203, 148+12*index/18), (198, 164)]
+        draw = ImageDraw.Draw(mask)
+        for rod in [near, far]:
+            draw.line([(round(x*reference['scale']-reference['x']),
+                        round(y*reference['scale']-reference['y'])) for x, y in rod],
+                       fill=255, width=4)
+    x = (index % reference['columns'])*reference['width']
+    y = (index // reference['columns'])*reference['height']
+    cell = reference_sheet.crop((x, y, x+reference['width'], y+reference['height']))
+    data = np.array(cell)
+    data[:, :, 3] = np.minimum(data[:, :, 3], np.array(mask))
+    return warp(data, reference_to_body)
 
 
 def lights(image, power):
@@ -132,20 +155,18 @@ def place(image):
 frames, motion = [], []
 base_stage = place(base)
 closing_panel = extract(closed, opening.filter(ImageFilter.MaxFilter(13)))
-profile = np.array(cal['profile'])
 for index in range(48):
-    # Preserve the reference descent profile, then ignite after the latch.
-    fraction = np.interp(min(index, 46), profile[:, 0], profile[:, 1])
-    angle = cal['initial_angle']*fraction
-    if angle < .015:
+    if index >= 46:
         layer = Image.fromarray(closing_panel)
     else:
-        t = np.deg2rad(angle)
-        matrix = np.column_stack((p1, p2*np.cos(t)+p3*np.sin(t), p4))
-        underside = np.linalg.det(matrix) < 0
-        layer = hardware(Image.new('RGBA', size), matrix, angle)
-        layer = Image.alpha_composite(layer, warp(inner if underside else top,
-                                  matrix @ (inverse_open if underside else inverse_closed)))
+        layer = recorded_hood(index)
+        # At the latch only, return the sharp original finish over the same seam.
+        start, end = cal['closed_handoff']
+        if index >= start:
+            amount = (index-start+1)/(end-start+1)
+            panel = closing_panel.copy()
+            panel[:, :, 3] = np.uint8(panel[:, :, 3]*amount)
+            layer = Image.alpha_composite(layer, Image.fromarray(panel))
     if index == 47:
         unlit = Image.alpha_composite(base, layer)
         lit = np.array(lights(unlit, 1))
@@ -176,4 +197,4 @@ if args.review:
     frames[0].save(args.review / 'preview.gif', save_all=True, append_images=frames[1:]+[frames[-1]]*12,
                    duration=42, loop=0, disposal=2)
 print(json.dumps({'frames': len(frames), 'width': 1080, 'height': 600,
-                  'body': body_path.name, 'initialAngle': cal['initial_angle']}))
+                  'body': body_path.name, 'hood': reference_path.name}))

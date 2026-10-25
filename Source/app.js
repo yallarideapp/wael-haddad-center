@@ -189,8 +189,8 @@
     const settled = heroLightsPlayed || reduceMotion();
     return `<div class="hero-visual" aria-hidden="true">
       <div class="hero-car rs5-real-hero ${settled ? 'lights-on' : 'lights-pending hood-loading'}" id="hero-car" data-phase="${settled ? 'complete' : 'loading'}" data-frame="poster">
-        <img class="rs5-poster" src="assets/car-hood-closed.webp?v=20261025-studio-car" width="1080" height="600" alt="" fetchpriority="high" decoding="async">
-        <video class="rs5-source" id="rs5SourceVideo" data-src="assets/car-hood-animation.mp4?v=20261025-studio-car" muted playsinline preload="none" tabindex="-1"></video>
+        <img class="rs5-poster" src="assets/car-hood-closed.webp?v=20261025-video-hood-hq" width="1080" height="600" alt="" fetchpriority="high" decoding="async">
+        <video class="rs5-source" id="rs5SourceVideo" data-src="assets/car-hood-animation.mp4?v=20261025-video-hood-hq" muted playsinline preload="none" tabindex="-1"></video>
         <canvas id="rs5HeroCanvas" width="1080" height="600" class="rs5-canvas"></canvas>
       </div>
     </div>`;
@@ -210,8 +210,8 @@
       heroRenderer = window.WHHood?.create({
         canvas: $('.rs5-canvas', car), video: $('.rs5-source', car),
         frames: {
-          base: 'assets/car-studio-base.webp?v=20261025-studio-car',
-          sources: [1,2,3,4].map((part) => `assets/car-hood-frames-${part}.webp?v=20261025-studio-car`),
+          base: 'assets/car-studio-base.webp?v=20261025-video-hood-hq',
+          sources: [1,2,3,4].map((part) => `assets/car-hood-frames-${part}.webp?v=20261025-video-hood-hq`),
           width: 1080, height: 600, columns: 3, perSheet: 12, count: 48, fps: 24
         },
         onPhase: (phase) => {

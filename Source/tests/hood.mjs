@@ -126,6 +126,21 @@ await suite.run(async (browser) => {
       await waitForSteadyLights(page);
       const final = await finalFramePixels(page);
       await page.screenshot({ path: resolve(suite.output, `${device}-lights-on.png`) });
+      const middleShape = await page.evaluate(async () => {
+        const atlas = new Image(); atlas.src = new URL('assets/car-hood-frames-3.webp', document.baseURI).href;
+        await atlas.decode();
+        const image = document.createElement('canvas'); image.width = 1080; image.height = 600;
+        const ctx = image.getContext('2d'); ctx.drawImage(atlas, 0, 1200, 1080, 600, 0, 0, 1080, 600);
+        const pixels = ctx.getImageData(0, 0, 1080, 600).data;
+        let opaque = 0, left = 1080, right = 0, top = 600, bottom = 0;
+        for (let y = 0; y < 600; y++) for (let x = 0; x < 1080; x++) {
+          if (pixels[(y * 1080 + x) * 4 + 3] <= 200) continue;
+          opaque++; left = Math.min(left, x); right = Math.max(right, x);
+          top = Math.min(top, y); bottom = Math.max(bottom, y);
+        }
+        return { opaque, width: right-left+1, height: bottom-top+1, fill: opaque / ((right-left+1) * (bottom-top+1)) };
+      });
+      suite.check(`${device} recorded mid-close bonnet retains its broad curved silhouette`, middleShape.opaque > 8000 && middleShape.opaque < 20000 && middleShape.fill > .45 && middleShape.fill < .9 && middleShape.height < 70, middleShape);
       suite.check(`${device} sequence changes both car pixels and the open-to-closed silhouette`, final.changedFraction > .025 && final.alphaChangedFraction > .005, final);
       suite.check(`${device} original grille, wheels, and door remain pixel-identical during closure`, final.staticRegions.every((region) => region.changed === 0 && region.opaque > region.box[2] * region.box[3] * .9), final.staticRegions);
       suite.check(`${device} final atlas cell agrees with the transparent lit poster`, final.posterMeanError < 3 && final.alphaMeanError < 1 && final.cornerAlpha === 0 && final.transparentFraction > .2, final);

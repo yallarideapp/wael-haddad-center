@@ -13,7 +13,7 @@ DELIVERY_PARENT="$ROOT/$NAME-complete-with-demo"
 DELIVERY="$DELIVERY_PARENT/$NAME"
 WORK="$ROOT/.package-tmp"
 RUNTIME=(index.html styles.css data.js hood-motion.js app.js admin.js assets/favicon.svg assets/car-hood-animation.mp4 assets/car-studio-base.webp assets/car-hood-open.webp assets/car-hood-closed.webp assets/car-hood-frames-1.webp assets/car-hood-frames-2.webp assets/car-hood-frames-3.webp assets/car-hood-frames-4.webp assets/audi-rings.svg assets/volkswagen-emblem.svg assets/porsche-crest.png)
-SOURCE_ONLY=(assets/coupe-studio.webp assets/car-studio-open.webp tools/render-car-frames.py tools/car-hood-calibration.json)
+SOURCE_ONLY=(assets/coupe-studio.webp assets/car-studio-open.webp assets/hood-reference.webp tools/render-car-frames.py tools/car-hood-calibration.json)
 
 inside() { case "$1" in "$ROOT"/*) return 0;; *) echo "Refusing path outside the project: $1" >&2; exit 1;; esac; }
 for p in "$DELIVERY_PARENT" "$WORK" "$ROOT/Demo"; do inside "$p"; done
@@ -60,7 +60,7 @@ echo "4/7 source ZIP"
 S="$WORK/stage/$NAME"
 mkdir -p "$S/Source/tools" "$S/Source/assets" "$S/Documents"
 for f in "${RUNTIME[@]}" README-AR.md MAINTENANCE-AR.md ASSET-SOURCES.md tools/package-store.sh tools/build-pages.sh tools/delivery-README-AR.md "${SOURCE_ONLY[@]}"; do cp "$SOURCE/$f" "$S/Source/$f"; done
-# Portable studio WebP inputs and the frame builder are in the source ZIP.
+# Portable studio/reference WebP inputs and the frame builder are in the source ZIP.
 # Prefer the optional full-size PNG master when present; it is not a runtime dependency.
 if [ -f "$SOURCE/assets/coupe-studio-master.png" ]; then cp "$SOURCE/assets/coupe-studio-master.png" "$S/Source/assets/"; fi
 if [ -d "$SOURCE/tests" ]; then
