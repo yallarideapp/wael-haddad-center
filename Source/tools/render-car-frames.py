@@ -36,6 +36,21 @@ sheet = Image.open(reference_path).convert('RGBA')
 if sheet.size != (size[0]*reference['columns'], size[1]*reference['rows']):
     raise ValueError('Reference atlas dimensions do not match calibration')
 
+def source_frame(index):
+    x = (index % reference['columns'])*size[0]
+    y = (index // reference['columns'])*size[1]
+    return sheet.crop((x, y, x+size[0], y+size[1]))
+
+# The recorded grille/text changes shape in the footage. Restore the original
+# photographic fascia, while leaving the hood, engine and lamps untouched.
+fascia = Image.new('L', size)
+ImageDraw.Draw(fascia).polygon([tuple(point) for point in cal['fascia_polygon']], fill=255)
+fascia = fascia.filter(ImageFilter.GaussianBlur(cal['fascia_feather_px']))
+# Transfer only the broad positive light bloom, not the video's grille lines.
+beam = ImageChops.subtract(source_frame(47).convert('RGB'), source_frame(46).convert('RGB'))
+beam = beam.filter(ImageFilter.GaussianBlur(cal['beam_blur_px']))
+body_lit = Image.merge('RGBA', (*ImageChops.add(body.convert('RGB'), beam).split(), body.getchannel('A')))
+
 # Preserve the complete recorded mechanism in one camera coordinate system.
 # Only the join to the photographic door/wheel/rear body is feathered.
 front = Image.new('L', size)
@@ -46,10 +61,9 @@ empty = Image.new('RGBA', size)
 base = Image.composite(empty, body, ownership)
 frames, motion = [], []
 for index in range(cal['count']):
-    x = (index % reference['columns'])*size[0]
-    y = (index // reference['columns'])*size[1]
-    native = sheet.crop((x, y, x+size[0], y+size[1]))
+    native = source_frame(index)
     combined = Image.composite(native, body, front)
+    combined = Image.composite(body_lit if index == cal['count']-1 else body, combined, fascia)
     # Disjoint pixel ownership lets transparent recorded gaps clear the closed
     # photograph underneath, rather than revealing a duplicate bonnet.
     overlay = Image.composite(combined, empty, ownership)

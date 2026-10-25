@@ -81,6 +81,31 @@ async function finalFramePixels(page) {
   });
 }
 
+// Compare the restored grille and badges with the original photographic body,
+// independently of the runtime atlas. The off-stage snapshot avoids headlight
+// bloom and must preserve the same detail as the initial open pose.
+async function restoredGrillePixels(page) {
+  return page.evaluate(async () => {
+    const body = new Image(); body.src = new URL('assets/car-body-aligned.webp', document.baseURI).href;
+    await body.decode();
+    const reference = document.createElement('canvas'); reference.width = 1080; reference.height = 600;
+    const ctx = reference.getContext('2d'); ctx.drawImage(body, 0, 0, 1080, 600);
+    const expected = ctx.getImageData(0, 0, 1080, 600).data;
+    return ['open', 'closed unlit'].map((name) => {
+      const actual = name === 'open' ? window.firstHoodPixels : window.hoodLightSnapshots.off?.pixels;
+      if (!actual) return { name, captured: false };
+      const box = [180, 330, 175, 85];
+      let error = 0, opaque = 0;
+      for (let y = box[1]; y < box[1] + box[3]; y++) for (let x = box[0]; x < box[0] + box[2]; x++) {
+        const i = (y * 1080 + x) * 4;
+        if (actual[i + 3] > 240 && expected[i + 3] > 240) opaque++;
+        for (let c = 0; c < 3; c++) error += Math.abs(actual[i + c] - expected[i + c]);
+      }
+      return { name, captured: true, opaqueFraction: opaque / (box[2] * box[3]), meanError: error / (box[2] * box[3] * 3) };
+    });
+  });
+}
+
 function watchExpectedMediaFailure(page, label) {
   // A deliberately rejected/404 media request may produce a browser resource
   // error. JavaScript exceptions remain failures in these fallback scenarios.
@@ -109,9 +134,9 @@ await suite.run(async (browser) => {
         const car = document.querySelector('#hero-car'), video = car.querySelector('.rs5-source'), canvas = car.querySelector('#rs5HeroCanvas');
         const sample = () => {
           if (!car.isConnected) return;
-          const box = car.getBoundingClientRect();
+          const box = car.getBoundingClientRect(), floor = car.querySelector('.rs5-floor').getBoundingClientRect();
           const frameIndex = Number(canvas.dataset.frameIndex), lightStage = canvas.dataset.lightStage;
-          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, frame: car.dataset.frame, frameIndex, lightStage, videoTime: video.currentTime, mediaTime: Number(canvas.dataset.mediaTime), body: [box.x, box.y, box.width, box.height] });
+          window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, frame: car.dataset.frame, frameIndex, lightStage, videoTime: video.currentTime, mediaTime: Number(canvas.dataset.mediaTime), body: [box.x, box.y, box.width, box.height], floor: [floor.x, floor.y, floor.width, floor.height] });
           // Capture the real rendered light stages while playback advances.
           // The off and LED states use the same closed pose, so lighting can be
           // checked without mistaking motion or a frame change for ignition.
@@ -127,6 +152,20 @@ await suite.run(async (browser) => {
       const first = await firstFramePixels(page);
       suite.check(`${device} first visible pose matches the fixed body parts plus the first recorded front frame`, first.width === 1080 && first.height === 600 && first.baseWidth === 1080 && first.baseHeight === 600 && first.atlasWidth === 3240 && first.atlasHeight === 2400 && first.videoWidth === 720 && first.videoHeight === 400 && first.meanError < .5 && first.alphaMeanError < .5 && first.dynamicRange > 100 && first.frame === 'video' && first.phase === 'open' && first.frameIndex === 0, first);
       suite.check(`${device} open car has transparent corners and foreground rather than a rectangular matte`, first.cornerAlpha === 0 && first.transparentFraction > .2 && first.opaqueFraction > .06 && first.opaqueFraction < .8, first);
+      const floor = await page.locator('.rs5-floor').evaluate(async (image) => {
+        await image.decode();
+        const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let cornerAlpha = 0, floorPixels = 0;
+        for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+          const alpha = pixels[(y * canvas.width + x) * 4 + 3];
+          if ((x < 16 || x >= canvas.width - 16) && (y < 16 || y >= canvas.height - 16)) cornerAlpha += alpha;
+          if (y >= 450 && alpha > 20) floorPixels++;
+        }
+        return { width: canvas.width, height: canvas.height, cornerAlpha, floorPixels };
+      });
+      suite.check(`${device} photographic floor loads separately with soft transparent outer corners`, floor.width === 1080 && floor.height === 600 && floor.cornerAlpha === 0 && floor.floorPixels > 2000, floor);
       suite.check(`${device} open pose pauses briefly before mechanical closure`, first.paused, first);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-open.png`) });
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing');
@@ -160,9 +199,9 @@ await suite.run(async (browser) => {
         const image = document.createElement('canvas'); image.width = 1080; image.height = 600;
         const ctx = image.getContext('2d'); ctx.drawImage(atlas, 0, 1200, 1080, 600, 0, 0, 1080, 600);
         const pixels = ctx.getImageData(0, 0, 1080, 600).data;
-        // These photographic areas must travel with the bonnet. A small hood
-        // cutout above a separately invented bay cannot satisfy this contract.
-        // This is a content/coverage check, not a claim of visual realism.
+        // The recorded bay and cowl must remain together, while the lower
+        // grille is restored from the sharper photograph. This coverage check
+        // catches a detached small hood cutout, without claiming realism.
         return [
           { name: 'engine bay', box: [240, 250, 180, 30] },
           { name: 'cowl', box: [470, 205, 100, 25] },
@@ -179,7 +218,9 @@ await suite.run(async (browser) => {
           return { name: region.name, opaqueFraction: opaque / (width * height), dynamicRange: max - min };
         });
       });
-      suite.check(`${device} recorded mid-close front includes photographic bay, cowl, and grille together`, middleFront.every((region) => region.opaqueFraction > .95 && region.dynamicRange > 8), middleFront);
+      suite.check(`${device} mid-close front retains photographic bay, cowl, and restored grille coverage`, middleFront.every((region) => region.opaqueFraction > .95 && region.dynamicRange > 8), middleFront);
+      const restoredGrille = await restoredGrillePixels(page);
+      suite.check(`${device} grille and badge region match the original sharp photograph before headlight ignition`, restoredGrille.every((region) => region.captured && region.opaqueFraction > .95 && region.meanError < 3), restoredGrille);
       suite.check(`${device} sequence changes both car pixels and the open-to-closed silhouette`, final.changedFraction > .025 && final.alphaChangedFraction > .005, final);
       suite.check(`${device} sharp wheels and door remain pixel-identical during closure`, final.staticRegions.every((region) => region.changed === 0 && region.opaque > region.box[2] * region.box[3] * .9), final.staticRegions);
       suite.check(`${device} final atlas cell agrees with the transparent lit poster`, final.posterMeanError < 3 && final.alphaMeanError < 1 && final.cornerAlpha === 0 && final.transparentFraction > .2, final);
@@ -222,6 +263,8 @@ await suite.run(async (browser) => {
       const moving = samples.filter((sample) => ['open', 'closing', 'complete'].includes(sample.phase));
       const shifted = moving.find((sample) => sample.body.some((value, index) => Math.abs(value - moving[0].body[index]) >= .1));
       suite.check(`${device} canvas stage position and dimensions remain fixed throughout playback`, moving.length > 10 && !shifted, { initial: moving[0], shifted });
+      const shiftedFloor = moving.find((sample) => sample.floor.some((value, index) => Math.abs(value - moving[0].floor[index]) >= .1));
+      suite.check(`${device} reflective floor stays aligned and stationary throughout playback`, moving.length > 10 && !shiftedFloor && moving.every((sample) => sample.floor.every((value, index) => Math.abs(value - sample.body[index]) < .5)), { initial: moving[0]?.floor, shiftedFloor });
       const opened = samples.find((sample) => sample.phase === 'open'), closing = samples.find((sample) => sample.phase === 'closing'), complete = samples.find((sample) => sample.phase === 'complete');
       const timing = opened && closing && complete ? { hold: closing.time - opened.time, playback: complete.time - closing.time } : null;
       suite.check(`${device} holds the initial frame for 300ms and plays the 3.5-second sequence once`, timing && timing.hold >= 200 && timing.hold <= 700 && timing.playback >= 3200 && timing.playback <= 4500, timing);

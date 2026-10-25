@@ -148,6 +148,8 @@ html[dir=ltr] .hero{background-image:radial-gradient(ellipse 58% 55% at 68% 52%,
 .hero-visual{position:relative;z-index:1;min-width:0;direction:ltr}
 .hero-visual::before{content:"";position:absolute;inset:-18% -14% -8%;z-index:0;pointer-events:none;background:radial-gradient(ellipse 44% 34% at 52% 38%,rgba(242,195,134,.36) 0%,rgba(204,142,82,.22) 38%,rgba(132,82,44,.08) 68%,transparent 88%),radial-gradient(ellipse 66% 52% at 50% 48%,rgba(178,116,64,.30) 0%,rgba(110,66,36,.15) 54%,transparent 82%),radial-gradient(ellipse 74% 18% at 51% 84%,rgba(198,138,80,.18) 0%,transparent 72%);filter:blur(10px);transform:translateZ(0)}
 .hero-car{position:relative;z-index:1;width:100%;max-width:520px;margin:0 auto;aspect-ratio:720/400;isolation:isolate;user-select:none;pointer-events:none}
+.rs5-floor{position:absolute;inset:0;z-index:-1;width:100%;height:100%;display:block;pointer-events:none}
+@media (min-width:1101px){.hero-car{width:110%;max-width:none;margin-inline:-5%}}
 .hero-car::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse 42% 5% at 49% 82%,rgba(5,2,0,.48),rgba(5,2,0,.18) 58%,transparent 100%),radial-gradient(ellipse 10% 2% at 58% 83%,rgba(0,0,0,.5),transparent 100%),radial-gradient(ellipse 10% 2% at 15% 80%,rgba(0,0,0,.4),transparent 100%),radial-gradient(ellipse 7% 2% at 86% 76%,rgba(0,0,0,.4),transparent 100%);filter:blur(3px)}
 .hero-car .rs5-poster{position:relative;width:100%;height:100%;max-width:none;display:block;transform:none;opacity:1}
 .rs5-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;transform:none;opacity:1}
@@ -173,6 +175,7 @@ html[dir=rtl] .hero-specialism{justify-content:flex-end}
 .brand-line .lbl{letter-spacing:0;text-transform:none;font-family:var(--f-body);color:var(--muted);font-style:normal;font-weight:600}
 @media (max-width:1100px) and (min-width:761px){
   .hero-grid{padding-inline:28px;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)}
+  .hero-car{max-width:none}
   .hero h1{font-size:36px}
 }
 @media (max-width:760px){

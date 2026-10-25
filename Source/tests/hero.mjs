@@ -7,7 +7,7 @@ const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-led\.webp
 async function heroState(page) {
   return page.evaluate(() => {
     const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
-    const car = rect('#hero-car'), poster = rect('.rs5-poster'), canvas = rect('#rs5HeroCanvas');
+    const car = rect('#hero-car'), poster = rect('.rs5-poster'), canvas = rect('#rs5HeroCanvas'), floor = rect('.rs5-floor');
     const dock = document.querySelector('.dock');
     const usableBottom = dock && getComputedStyle(dock).display !== 'none' ? dock.getBoundingClientRect().top : innerHeight;
     const fits = (selector) => {
@@ -18,12 +18,16 @@ async function heroState(page) {
     const marques = [...row.querySelectorAll('.marque')];
     const image = document.querySelector('.rs5-poster');
     const source = document.querySelector('.rs5-source'), canvasElement = document.querySelector('#rs5HeroCanvas');
+    const floorImage = document.querySelector('.rs5-floor');
     const stageStyle = getComputedStyle(document.querySelector('#hero-car'));
     return {
       posterLoaded: image.complete && image.naturalWidth === 1080 && image.naturalHeight === 600,
       canvasHasHighResolution: canvasElement.width === 1080 && canvasElement.height === 600,
       posterAndCanvasAligned: ['x', 'y', 'width', 'height'].every((key) => Math.abs(poster[key] - canvas[key]) < .5),
-      stageHasVideoAspect: Math.abs(car.width / car.height - 1.8) < .005 && car.width <= 520.5,
+      stageHasVideoAspect: Math.abs(car.width / car.height - 1.8) < .005,
+      stageHasResponsiveScale: innerWidth >= 1101 ? car.width >= Math.min(innerWidth, 1440) * .57 && car.width <= Math.min(innerWidth, 1440) * .7 : (innerWidth > 760 || car.width <= 520.5) && car.left >= -1 && car.right <= innerWidth + 1,
+      floorLoaded: floorImage.complete && floorImage.naturalWidth === 1080 && floorImage.naturalHeight === 600,
+      floorAndCarAligned: ['x', 'y', 'width', 'height'].every((key) => Math.abs(floor[key] - canvas[key]) < .5),
       stageHasNoMaskOrMatte: stageStyle.maskImage === 'none' && stageStyle.backgroundImage === 'none' && stageStyle.backgroundColor === 'rgba(0, 0, 0, 0)',
       sourceIsInlineMuted: source.muted && source.playsInline && source.getAttribute('data-src').includes('assets/car-hood-animation.mp4'),
       titleVisible: fits('.hero h1'), bookingVisible: fits('.hero a[href="#book"]'),
