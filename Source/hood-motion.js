@@ -2,7 +2,69 @@
 (() => {
   'use strict';
 
-  function create({ canvas, video, frames, onPhase, onError }) {
+  // Soft, irregular density textures are prepared once. Every puff's position
+  // comes from media time, so smoke shares the hood's pause/resume and cleanup.
+  function createSmoke(canvas) {
+    let context;
+    try { context = canvas?.getContext('2d', { alpha: true }); } catch (_) { return null; }
+    if (!context) return null;
+    const sprites = [];
+    let seed = 7319;
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let variant = 0; variant < 4; variant++) {
+      const sprite = document.createElement('canvas'); sprite.width = sprite.height = 192;
+      const painter = sprite.getContext('2d');
+      if (!painter) return null;
+      const pixels = painter.createImageData(192, 192);
+      const fields = [4, 8, 16, 32].map((size) => ({ size, data: Array.from({ length: (size + 1) ** 2 }, random) }));
+      const sample = ({ size, data }, x, y) => {
+        const gx = x * size / 192, gy = y * size / 192, ix = Math.floor(gx), iy = Math.floor(gy);
+        const smooth = (n) => n * n * (3 - 2 * n), fx = smooth(gx - ix), fy = smooth(gy - iy), row = size + 1;
+        return (data[iy * row + ix] * (1 - fx) + data[iy * row + ix + 1] * fx) * (1 - fy) +
+          (data[(iy + 1) * row + ix] * (1 - fx) + data[(iy + 1) * row + ix + 1] * fx) * fy;
+      };
+      for (let y = 0; y < 192; y++) for (let x = 0; x < 192; x++) {
+        const dx = (x - 95.5) / 95.5, dy = (y - 95.5) / 95.5;
+        const noise = fields.reduce((sum, field, octave) => sum + sample(field, x, y) * [0.52, 0.28, 0.14, 0.06][octave], 0);
+        const edge = Math.max(0, 1 - dx * dx - dy * dy);
+        const density = Math.pow(edge, 1.6) * Math.max(0, noise - 0.25) * 2;
+        const i = (y * 192 + x) * 4;
+        pixels.data[i] = 171 + noise * 46;
+        pixels.data[i + 1] = 162 + noise * 43;
+        pixels.data[i + 2] = 150 + noise * 39;
+        pixels.data[i + 3] = Math.min(205, density * 205);
+      }
+      painter.putImageData(pixels, 0, 0); sprites.push(sprite);
+    }
+    const clear = () => context.clearRect(0, 0, canvas.width, canvas.height);
+    return {
+      paint(time, index) {
+        clear();
+        if (time <= 0 || time >= 2 || index >= 47 || !sprites.length) return;
+        const fade = Math.max(0, Math.min(1, (2 - time) / 0.75));
+        const envelope = Math.min(1, time / 0.18) * fade * fade * (3 - 2 * fade);
+        context.save(); context.scale(canvas.width / 1080, canvas.height / 840);
+        // The extra 240px is above the photographic stage, so the plume can
+        // rise naturally without a hard cut at the raised bonnet's top edge.
+        context.translate(0, 240);
+        for (let puff = 0; puff < 16; puff++) {
+          const age = time - (-0.28 + puff * 0.075), life = 1.6 + (puff % 3) * 0.12;
+          if (age <= 0 || age >= life) continue;
+          const size = 52 + age * (90 + (puff % 3) * 12);
+          const x = (puff % 2 ? 420 : 340) - age * (48 + (puff % 3) * 8) + Math.sin(age * 3.5 + puff) * 14;
+          const y = 255 - age * (150 + (puff % 4) * 11);
+          context.save(); context.translate(x, y); context.rotate(Math.sin(puff * 2.1 + age) * 0.38);
+          context.globalAlpha = Math.pow(Math.sin(Math.PI * age / life), 1.4) * 0.42 * envelope;
+          context.drawImage(sprites[puff % 4], -size / 2, -size * 0.44, size, size * 0.88);
+          context.restore();
+        }
+        context.restore();
+      },
+      destroy() { clear(); sprites.forEach((sprite) => { sprite.width = sprite.height = 0; }); sprites.length = 0; }
+    };
+  }
+
+  function create({ canvas, smokeCanvas, video, frames, onPhase, onError }) {
     if (!frames || typeof frames.base !== 'string' || !frames.base.length ||
         !Array.isArray(frames.sources) || !frames.sources.length ||
         !frames.sources.every((source) => typeof source === 'string' && source.length > 0) ||
@@ -13,6 +75,8 @@
     let context;
     try { context = canvas?.getContext('2d', { alpha: true }); } catch (_) { return null; }
     if (!context || !video) return null;
+    let smoke;
+    try { smoke = createSmoke(smokeCanvas); } catch (_) { smoke = null; }
 
     const timeouts = new Set(), listeners = [], pending = new Set(), atlases = [];
     const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -44,6 +108,7 @@
       pending.forEach((cancel) => cancel()); pending.clear();
     };
     const releaseAtlases = () => {
+      smoke?.destroy(); smoke = null;
       atlases.forEach((atlas) => {
         atlas.onload = null; atlas.onerror = null;
         atlas.removeAttribute('src');
@@ -75,6 +140,7 @@
           0, 0, canvas.width, canvas.height);
         canvas.dataset.mediaTime = Number(mediaTime).toFixed(4);
         canvas.dataset.frameIndex = String(index);
+        smoke?.paint(mediaTime, index);
         return true;
       } catch (_) { return false; }
     };

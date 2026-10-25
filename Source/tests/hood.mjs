@@ -121,9 +121,29 @@ await suite.run(async (browser) => {
       suite.check(`${device} open pose pauses briefly before mechanical closure`, first.paused, first);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-open.png`) });
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'closing');
+      await page.waitForFunction(() => Number(document.querySelector('#rs5HeroCanvas').dataset.mediaTime) >= .6);
+      const smoke = await page.locator('.rs5-smoke').evaluate((canvas) => {
+        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let visible = 0, soft = 0, outsidePlume = 0;
+        for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+          const alpha = pixels[(y * canvas.width + x) * 4 + 3];
+          if (!alpha) continue;
+          visible++; if (alpha < 160) soft++;
+          // The plume stays above the engine: it cannot wash over the wheels,
+          // rear body, or the outer frame edges.
+          if (x < 30 || x > 650 || y < 5 || y > 540) outsidePlume++;
+        }
+        return { visible, soft, outsidePlume };
+      });
+      suite.check(`${device} soft smoke rises above the engine during closure and stays clear of wheels and frame edges`, smoke.visible > 500 && smoke.soft / smoke.visible > .95 && smoke.outsidePlume === 0, smoke);
       await page.screenshot({ path: resolve(suite.output, `${device}-hood-closing.png`) });
       await waitForSteadyLights(page);
       const final = await finalFramePixels(page);
+      suite.check(`${device} smoke fully clears for the frozen lit ending`, await page.locator('.rs5-smoke').evaluate((canvas) => {
+        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) return false;
+        return true;
+      }));
       await page.screenshot({ path: resolve(suite.output, `${device}-lights-on.png`) });
       const middleFront = await page.evaluate(async () => {
         const atlas = new Image(); atlas.src = new URL('assets/car-hood-frames-3.webp', document.baseURI).href;
