@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Prepare a coherent recorded front and stationary photographic body locally.
+"""Prepare recorded hood motion over the original stationary photographic car.
 
 Requires Pillow. The supplied body is registered to the video camera already.
-Hood, engine, cowl and front fascia retain their recorded geometry together.
+Only the real hood, engine and hinge pixels move; the body retains its photo.
 """
 import argparse
 import json
+import bisect
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
@@ -41,32 +42,38 @@ def source_frame(index):
     y = (index // reference['columns'])*size[1]
     return sheet.crop((x, y, x+size[0], y+size[1]))
 
-# The recorded grille/text changes shape in the footage. Restore the original
-# photographic fascia, while leaving the hood, engine and lamps untouched.
-fascia = Image.new('L', size)
-ImageDraw.Draw(fascia).polygon([tuple(point) for point in cal['fascia_polygon']], fill=255)
-fascia = fascia.filter(ImageFilter.GaussianBlur(cal['fascia_feather_px']))
-# Transfer only the broad positive light bloom, not the video's grille lines.
-beam = ImageChops.subtract(source_frame(47).convert('RGB'), source_frame(46).convert('RGB'))
-beam = beam.filter(ImageFilter.GaussianBlur(cal['beam_blur_px']))
-body_lit = Image.merge('RGBA', (*ImageChops.add(body.convert('RGB'), beam).split(), body.getchannel('A')))
+def polygon_mask(points, feather):
+    mask = Image.new('L', size)
+    ImageDraw.Draw(mask).polygon([tuple(point) for point in points], fill=255)
+    return mask.filter(ImageFilter.GaussianBlur(feather))
 
-# Preserve the complete recorded mechanism in one camera coordinate system.
-# Only the join to the photographic door/wheel/rear body is feathered.
-front = Image.new('L', size)
-ImageDraw.Draw(front).polygon([tuple(point) for point in cal['native_front_polygon']], fill=255)
-front = front.filter(ImageFilter.GaussianBlur(cal['feather_px']))
-ownership = front.point(lambda value: 255 if value else 0)
-empty = Image.new('RGBA', size)
-base = Image.composite(empty, body, ownership)
+# Clear the actual closed bonnet footprint, never the windshield or the whole
+# front of the car. The recorded engine and hood fill/occlude this opening.
+opening = polygon_mask(cal['opening_polygon'], cal['opening_feather_px'])
+engine = ImageChops.multiply(opening, polygon_mask(cal['engine_polygon'], cal['engine_feather_px']))
+hinge = polygon_mask(cal['hinge_polygon'], cal['hinge_feather_px'])
+base = body.copy()
+base.putalpha(ImageChops.multiply(body.getchannel('A'), ImageChops.invert(opening)))
+keys = cal['hood_outline_keys']
+key_indices = [key['index'] for key in keys]
+
+def hood_mask(index):
+    position = max(0, min(len(keys)-2, bisect.bisect_right(key_indices, index)-1))
+    left, right = keys[position:position+2]
+    ratio = (index-left['index'])/(right['index']-left['index'])
+    outline = [[x+(xx-x)*ratio, y+(yy-y)*ratio]
+               for (x,y), (xx,yy) in zip(left['outline'], right['outline'])]
+    return ImageChops.lighter(polygon_mask(outline, cal['hood_feather_px']), hinge)
+
 frames, motion = [], []
 for index in range(cal['count']):
-    native = source_frame(index)
-    combined = Image.composite(native, body, front)
-    combined = Image.composite(body_lit if index == cal['count']-1 else body, combined, fascia)
-    # Disjoint pixel ownership lets transparent recorded gaps clear the closed
-    # photograph underneath, rather than revealing a duplicate bonnet.
-    overlay = Image.composite(combined, empty, ownership)
+    pose = min(index, cal['count']-2)
+    native = source_frame(pose)
+    engine_layer = native.copy()
+    engine_layer.putalpha(ImageChops.multiply(native.getchannel('A'), engine))
+    hood = native.copy()
+    hood.putalpha(ImageChops.multiply(native.getchannel('A'), hood_mask(pose)))
+    overlay = Image.alpha_composite(engine_layer, hood)
     motion.append(overlay)
     frames.append(Image.alpha_composite(base, overlay))
 args.output.mkdir(parents=True, exist_ok=True)
@@ -84,8 +91,7 @@ for part in range(4):
         x, y = (cell % 3)*size[0], (cell // 3)*size[1]
         layer = decoded.crop((x, y, x+size[0], y+size[1]))
         frames[part*12+cell] = Image.alpha_composite(base, layer)
-for label, index in [('open', 0), ('closed', cal['count']-1)]:
-    frames[index].save(args.output / f'car-hood-{label}.webp', lossless=True, method=6)
+frames[0].save(args.output / 'car-hood-open.webp', lossless=True, method=6)
 
 # The running-light state follows the closed, unlit recorded pose. Preserve
 # dark projector bowls; only their narrow surrounding LED strips emit light.
@@ -107,11 +113,46 @@ emission = Image.merge('RGB', (glow.point(lambda n: round(n*.63)),
 lit = ImageChops.screen(rgb, emission)
 lit = Image.composite(Image.new('RGB', size, (223, 242, 255)), lit,
                        mask.point(lambda n: round(n*.8)))
-red, green, blue = ImageChops.difference(rgb, lit).split()
-changed = ImageChops.lighter(ImageChops.lighter(red, green), blue).point(lambda n: 255 if n else 0)
-alpha = ImageChops.multiply(changed, unlit.getchannel('A'))
-led = Image.merge('RGBA', (*lit.split(), alpha))
+def light_layer(before, after):
+    red, green, blue = ImageChops.difference(before, after).split()
+    changed = ImageChops.lighter(ImageChops.lighter(red, green), blue).point(lambda n: 255 if n else 0)
+    # An overlay must not add opacity to the antialiased body silhouette.
+    opaque = unlit.getchannel('A').point(lambda n: 255 if n == 255 else 0)
+    alpha = ImageChops.multiply(changed, opaque)
+    return Image.merge('RGBA', (*after.split(), alpha))
+
+led = light_layer(rgb, lit)
 led.save(args.output / 'car-led.webp', lossless=True, method=6)
+led_frame = Image.alpha_composite(unlit, led)
+
+# Keep the exact same closed pose for both light stages. The later recorded
+# frame contributes positive radiance inside the lamps, never its geometry.
+lighting = cal['headlights']
+recorded_light = ImageChops.subtract(source_frame(47).convert('RGB'), source_frame(46).convert('RGB'))
+positive = Image.new('RGB', size)
+for mapping in lighting['radiance_mappings']:
+    left, top, right, bottom = mapping['target']
+    radiance = recorded_light.crop(tuple(mapping['source'])).resize(
+        (right-left, bottom-top), Image.Resampling.LANCZOS)
+    positive.paste(radiance, (left, top))
+optic = Image.new('L', size)
+for polygon in lighting['optic_polygons']:
+    ImageDraw.Draw(optic).polygon([tuple(point) for point in polygon], fill=255)
+optic = optic.filter(ImageFilter.GaussianBlur(lighting['optic_feather_px']))
+spill = Image.new('L', size)
+ImageDraw.Draw(spill).ellipse(tuple(lighting['spill_ellipse']), fill=lighting['spill_strength'])
+spill = spill.filter(ImageFilter.GaussianBlur(lighting['spill_feather_px']))
+def masked_rgb(image, mask):
+    return Image.merge('RGB', tuple(ImageChops.multiply(channel, mask) for channel in image.split()))
+direct = masked_rgb(positive.filter(ImageFilter.GaussianBlur(lighting['direct_blur_px'])), optic)
+bloom = masked_rgb(positive.filter(ImageFilter.GaussianBlur(lighting['bloom_blur_px'])), spill)
+main_rgb = ImageChops.add(led_frame.convert('RGB'), ImageChops.lighter(direct, bloom))
+headlights = light_layer(led_frame.convert('RGB'), main_rgb)
+headlights.save(args.output / 'car-headlights.webp', lossless=True, method=6)
+final = Image.alpha_composite(led_frame, headlights)
+final.save(args.output / 'car-hood-closed.webp', lossless=True, method=6)
+# Review the actual held pose with its light layers, not the unused later pose.
+frames[-1] = final
 if args.review:
     args.review.mkdir(parents=True, exist_ok=True)
     contact = Image.new('RGB', (2160, 1200), '#302118')
@@ -123,7 +164,7 @@ if args.review:
         contact.paste(bg.convert('RGB').resize((720, 400)), ((cell % 3)*720, (cell // 3)*400))
     contact.save(args.review / 'contact.jpg', quality=96)
     unlit.save(args.review / 'lights-off.png')
-    Image.alpha_composite(unlit, led).save(args.review / 'lights-led.png')
-    frames[-1].save(args.review / 'lights-headlights.png')
+    led_frame.save(args.review / 'lights-led.png')
+    final.save(args.review / 'lights-headlights.png')
 print(json.dumps({'frames': len(frames), 'size': size, 'base': cal['body'],
-                  'reference': reference_path.name, 'geometry': 'recorded front unchanged'}))
+                  'reference': reference_path.name, 'geometry': 'fixed photographic body, recorded hood and engine only'}))

@@ -3,7 +3,93 @@ import { createSuite, navigate, newContext, waitForSteadyLights } from './helper
 
 const suite = createSuite('hood');
 const mediaPattern = '**/assets/car-hood-animation.mp4*';
-const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-led\.webp|car-hood-(?:animation\.mp4|frames-\d\.webp))/.test(url);
+const isMotionAsset = (url) => /\/assets\/(?:car-studio-base\.webp|car-led\.webp|car-headlights\.webp|car-hood-(?:animation\.mp4|frames-\d\.webp))/.test(url);
+// Reviewed against the complete swept hood/engine area, independently of the
+// production motion mask. These original photographic surfaces never move.
+const fixedBodyRegions = [
+  { name: 'near lamp housing', box: [405, 307, 124, 27] },
+  { name: 'far lamp housing', box: [101, 303, 47, 20] },
+  { name: 'front fender and arch', box: [575, 300, 25, 170] },
+  { name: 'lower bumper', box: [84, 355, 456, 110] },
+  { name: 'rear quarter and outer silhouette', box: [800, 230, 240, 280] },
+  { name: 'roof', box: [660, 126, 100, 25] },
+  { name: 'windshield', box: [665, 175, 30, 45] },
+  { name: 'door', box: [750, 300, 110, 80] }
+];
+
+async function fixedBodyAcrossFrames(page) {
+  return page.evaluate(async (regions) => {
+    const load = async (path) => { const image = new Image(); image.src = new URL(path, document.baseURI).href; await image.decode(); return image; };
+    const [body, base, ...atlases] = await Promise.all([
+      'assets/car-body-aligned.webp', 'assets/car-studio-base.webp',
+      ...[1, 2, 3, 4].map((part) => `assets/car-hood-frames-${part}.webp`)
+    ].map(load));
+    const reference = document.createElement('canvas'); reference.width = 1080; reference.height = 600;
+    const ctx = reference.getContext('2d', { willReadFrequently: true }); ctx.drawImage(body, 0, 0);
+    const expected = regions.map((region) => ctx.getImageData(...region.box).data);
+    const rendered = document.createElement('canvas'); rendered.width = 1080; rendered.height = 600;
+    const paint = rendered.getContext('2d', { willReadFrequently: true });
+    return regions.map((region, position) => {
+      const source = expected[position];
+      let changed = 0, alphaChanged = 0, opaque = 0, transparent = 0, min = 255, max = 0;
+      const frames = [];
+      for (let index = 0; index <= 46; index++) {
+        const cell = index % 12;
+        paint.clearRect(0, 0, 1080, 600); paint.drawImage(base, 0, 0);
+        paint.drawImage(atlases[Math.floor(index / 12)], cell % 3 * 1080, Math.floor(cell / 3) * 600, 1080, 600, 0, 0, 1080, 600);
+        const actual = paint.getImageData(...region.box).data;
+        let frameChanged = 0, frameAlphaChanged = 0;
+        for (let pixel = 0; pixel < source.length; pixel += 4) {
+          if (!index) {
+            if (source[pixel + 3] > 240) { opaque++; for (let channel = 0; channel < 3; channel++) { min = Math.min(min, source[pixel + channel]); max = Math.max(max, source[pixel + channel]); } }
+            if (!source[pixel + 3]) transparent++;
+          }
+          if (actual[pixel + 3] !== source[pixel + 3]) frameAlphaChanged++;
+          if ([0, 1, 2, 3].some((channel) => actual[pixel + channel] !== source[pixel + channel])) frameChanged++;
+        }
+        changed += frameChanged; alphaChanged += frameAlphaChanged;
+        frames.push({ index, changed: frameChanged, alphaChanged: frameAlphaChanged });
+      }
+      return { ...region, changed, alphaChanged, opaque, transparent, dynamicRange: max - min, frames };
+    });
+  }, fixedBodyRegions);
+}
+
+// Interior patches establish that the complete photographed mechanism still
+// comes from the recording. Static lamps/bumper no longer belong in an atlas.
+async function recordedMechanismPixels(page) {
+  return page.evaluate(async () => {
+    const load = async (path) => { const image = new Image(); image.src = new URL(path, document.baseURI).href; await image.decode(); return image; };
+    const [source, ...atlases] = await Promise.all(['assets/hood-reference.webp', ...[1, 2, 3, 4].map((part) => `assets/car-hood-frames-${part}.webp`)].map(load));
+    const reference = document.createElement('canvas'); reference.width = 1080; reference.height = 600;
+    const rendered = document.createElement('canvas'); rendered.width = 1080; rendered.height = 600;
+    const ref = reference.getContext('2d', { willReadFrequently: true }), paint = rendered.getContext('2d', { willReadFrequently: true });
+    return [
+      { name: 'open hood underside', index: 0, box: [300, 70, 120, 70] },
+      { name: 'visible engine', index: 0, box: [250, 250, 115, 25] },
+      { name: 'mid-close hood underside', index: 24, box: [280, 200, 90, 12] },
+      { name: 'closed hood surface', index: 46, box: [270, 250, 150, 25] }
+    ].map((region) => {
+      const cell = region.index % 12;
+      ref.clearRect(0, 0, 1080, 600); paint.clearRect(0, 0, 1080, 600);
+      ref.drawImage(source, region.index % 6 * 1080, Math.floor(region.index / 6) * 600, 1080, 600, 0, 0, 1080, 600);
+      paint.drawImage(atlases[Math.floor(region.index / 12)], cell % 3 * 1080, Math.floor(cell / 3) * 600, 1080, 600, 0, 0, 1080, 600);
+      const expected = ref.getImageData(...region.box).data, actual = paint.getImageData(...region.box).data;
+      let error = 0, alphaError = 0, opaque = 0, min = 255, max = 0;
+      for (let pixel = 0; pixel < actual.length; pixel += 4) {
+        const alpha = actual[pixel + 3], expectedAlpha = expected[pixel + 3];
+        if (alpha > 240) opaque++;
+        alphaError += Math.abs(alpha - expectedAlpha);
+        for (let channel = 0; channel < 3; channel++) {
+          error += Math.abs(actual[pixel + channel] * alpha - expected[pixel + channel] * expectedAlpha) / 255;
+          if (alpha > 240) { min = Math.min(min, actual[pixel + channel]); max = Math.max(max, actual[pixel + channel]); }
+        }
+      }
+      const pixels = region.box[2] * region.box[3];
+      return { ...region, opaqueFraction: opaque / pixels, meanError: error / (pixels * 3), alphaMeanError: alphaError / pixels, dynamicRange: max - min };
+    });
+  });
+}
 
 // Check the runtime compositor against decoded source cells independently of
 // its draw loop; the timing video supplies no visible pixels.
@@ -118,35 +204,54 @@ await suite.run(async (browser) => {
     let release;
     try {
       const page = await context.newPage(); suite.watch(page, device);
-      const atlasPaths = new Set(), basePaths = new Set(), ledPaths = new Set();
+      const atlasPaths = new Set(), basePaths = new Set(), ledPaths = new Set(), headlightPaths = new Set();
       page.on('request', (request) => {
         const path = new URL(request.url()).pathname;
         if (/car-hood-frames-\d\.webp$/.test(path)) atlasPaths.add(path);
         if (/car-studio-base\.webp$/.test(path)) basePaths.add(path);
         if (/car-led\.webp$/.test(path)) ledPaths.add(path);
+        if (/car-headlights\.webp$/.test(path)) headlightPaths.add(path);
       });
       const gate = new Promise((resolveGate) => { release = resolveGate; });
       await page.route(mediaPattern, async (route) => { await gate; await route.continue(); });
       await navigate(page, suite.url());
-      await page.evaluate(() => {
+      await page.evaluate(async (regions) => {
         window.hoodSamples = [];
         window.hoodLightSnapshots = {};
+        window.hoodStaticSamples = [];
         const car = document.querySelector('#hero-car'), video = car.querySelector('.rs5-source'), canvas = car.querySelector('#rs5HeroCanvas');
+        const body = new Image(); body.src = new URL('assets/car-body-aligned.webp', document.baseURI).href; await body.decode();
+        const reference = document.createElement('canvas'); reference.width = 1080; reference.height = 600;
+        const ref = reference.getContext('2d', { willReadFrequently: true }); ref.drawImage(body, 0, 0);
+        const expected = regions.map((region) => ref.getImageData(...region.box).data), seenFrames = new Set();
         const sample = () => {
           if (!car.isConnected) return;
           const box = car.getBoundingClientRect(), floor = car.querySelector('.rs5-floor').getBoundingClientRect();
           const frameIndex = Number(canvas.dataset.frameIndex), lightStage = canvas.dataset.lightStage;
           window.hoodSamples.push({ time: performance.now(), phase: car.dataset.phase, frame: car.dataset.frame, frameIndex, lightStage, videoTime: video.currentTime, mediaTime: Number(canvas.dataset.mediaTime), body: [box.x, box.y, box.width, box.height], floor: [floor.x, floor.y, floor.width, floor.height] });
+          if (lightStage === 'off' && Number.isInteger(frameIndex) && frameIndex >= 0 && !seenFrames.has(frameIndex)) {
+            seenFrames.add(frameIndex);
+            const ctx = canvas.getContext('2d');
+            window.hoodStaticSamples.push({ frameIndex, regions: regions.map((region, position) => {
+              const source = expected[position], actual = ctx.getImageData(...region.box).data;
+              let changed = 0, alphaChanged = 0;
+              for (let pixel = 0; pixel < source.length; pixel += 4) {
+                if (actual[pixel + 3] !== source[pixel + 3]) alphaChanged++;
+                if ([0, 1, 2, 3].some((channel) => actual[pixel + channel] !== source[pixel + channel])) changed++;
+              }
+              return { name: region.name, changed, alphaChanged };
+            }) });
+          }
           // Capture the real rendered light stages while playback advances.
-          // The off and LED states use the same closed pose, so lighting can be
-          // checked without mistaking motion or a frame change for ignition.
+          // Every light stage must use the same closed pose, so lighting can
+          // be checked without mistaking a geometry change for ignition.
           if ((frameIndex === 46 && lightStage === 'off') || (lightStage === 'led' && Number(canvas.dataset.mediaTime) >= 2.35) || lightStage === 'headlights') {
             if (!window.hoodLightSnapshots[lightStage]) window.hoodLightSnapshots[lightStage] = { pixels: canvas.getContext('2d').getImageData(0, 0, 1080, 600).data, frameIndex, mediaTime: Number(canvas.dataset.mediaTime) };
           }
           if (car.dataset.phase !== 'complete') requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
-      });
+      }, fixedBodyRegions);
       release();
       await page.waitForFunction(() => document.querySelector('#hero-car').dataset.phase === 'open');
       const first = await firstFramePixels(page);
@@ -193,53 +298,35 @@ await suite.run(async (browser) => {
         return true;
       }));
       await page.screenshot({ path: resolve(suite.output, `${device}-lights-on.png`) });
-      const middleFront = await page.evaluate(async () => {
-        const atlas = new Image(); atlas.src = new URL('assets/car-hood-frames-3.webp', document.baseURI).href;
-        await atlas.decode();
-        const image = document.createElement('canvas'); image.width = 1080; image.height = 600;
-        const ctx = image.getContext('2d'); ctx.drawImage(atlas, 0, 1200, 1080, 600, 0, 0, 1080, 600);
-        const pixels = ctx.getImageData(0, 0, 1080, 600).data;
-        // The recorded bay and cowl must remain together, while the lower
-        // grille is restored from the sharper photograph. This coverage check
-        // catches a detached small hood cutout, without claiming realism.
-        return [
-          { name: 'engine bay', box: [240, 250, 180, 30] },
-          { name: 'cowl', box: [470, 205, 100, 25] },
-          { name: 'grille', box: [220, 330, 120, 70] }
-        ].map((region) => {
-          const [left, top, width, height] = region.box;
-          let opaque = 0, min = 255, max = 0;
-          for (let y = top; y < top + height; y++) for (let x = left; x < left + width; x++) {
-            const i = (y * 1080 + x) * 4;
-            if (pixels[i + 3] <= 240) continue;
-            opaque++;
-            for (let c = 0; c < 3; c++) { min = Math.min(min, pixels[i + c]); max = Math.max(max, pixels[i + c]); }
-          }
-          return { name: region.name, opaqueFraction: opaque / (width * height), dynamicRange: max - min };
-        });
-      });
-      suite.check(`${device} mid-close front retains photographic bay, cowl, and restored grille coverage`, middleFront.every((region) => region.opaqueFraction > .95 && region.dynamicRange > 8), middleFront);
+      const mechanism = await recordedMechanismPixels(page);
+      suite.check(`${device} open, moving, and closed hood plus engine retain the recorded photographic detail`, mechanism.every((region) => region.opaqueFraction > .95 && region.meanError < 3 && region.alphaMeanError < 2 && region.dynamicRange > 8), mechanism);
+      const fixedBody = await fixedBodyAcrossFrames(page);
+      suite.check(`${device} all 47 hood poses preserve original lamp housings, fenders, bumper, roof, windshield, door, and rear body exactly`, fixedBody.every((region) => region.frames.length === 47 && region.changed === 0 && region.alphaChanged === 0), fixedBody);
+      suite.check(`${device} fixed body checks contain photographic detail and the complete outer rear silhouette`, fixedBody.every((region) => region.opaque > 100 && region.dynamicRange > 8) && fixedBody.find((region) => region.name === 'rear quarter and outer silhouette')?.transparent > 100, fixedBody);
+      const staticSamples = await page.evaluate(() => window.hoodStaticSamples);
+      const sampledIndices = staticSamples.map((sample) => sample.frameIndex);
+      suite.check(`${device} real playback preserves the photographic body in intermediate frames across all four atlases`, sampledIndices.length >= 30 && sampledIndices.includes(0) && sampledIndices.includes(46) && [0, 1, 2, 3].every((part) => sampledIndices.some((index) => Math.floor(index / 12) === part)) && staticSamples.every((sample) => sample.regions.every((region) => region.changed === 0 && region.alphaChanged === 0)), staticSamples);
       const restoredGrille = await restoredGrillePixels(page);
       suite.check(`${device} grille and badge region match the original sharp photograph before headlight ignition`, restoredGrille.every((region) => region.captured && region.opaqueFraction > .95 && region.meanError < 3), restoredGrille);
       suite.check(`${device} sequence changes both car pixels and the open-to-closed silhouette`, final.changedFraction > .025 && final.alphaChangedFraction > .005, final);
       suite.check(`${device} sharp wheels and door remain pixel-identical during closure`, final.staticRegions.every((region) => region.changed === 0 && region.opaque > region.box[2] * region.box[3] * .9), final.staticRegions);
-      suite.check(`${device} final atlas cell agrees with the transparent lit poster`, final.posterMeanError < 3 && final.alphaMeanError < 1 && final.cornerAlpha === 0 && final.transparentFraction > .2, final);
-      suite.check(`${device} timing video stops with the final RGBA frame selected`, final.frameIndex === 47 && final.paused && Number.isFinite(final.duration) && final.duration >= 3.4 && final.duration <= 3.6 && final.videoTime >= final.duration - .15 && final.videoTime <= final.duration + .01, final);
+      suite.check(`${device} closed pose with light overlays agrees with the transparent lit poster`, final.posterMeanError < 3 && final.alphaMeanError < 1 && final.cornerAlpha === 0 && final.transparentFraction > .2, final);
+      suite.check(`${device} timing video stops while holding the same closed pose`, final.frameIndex === 46 && final.paused && Number.isFinite(final.duration) && final.duration >= 3.4 && final.duration <= 3.6 && final.videoTime >= final.duration - .15 && final.videoTime <= final.duration + .01, final);
       await page.waitForTimeout(220);
       const frozen = await finalFramePixels(page);
       suite.check(`${device} final frame remains frozen with no loop or later redraw`, frozen.hash === final.hash && frozen.videoTime === final.videoTime && frozen.paused && frozen.phase === 'complete', { final, frozen });
       const samples = await page.evaluate(() => window.hoodSamples);
       const lightStages = [...new Set(samples.map((sample) => sample.lightStage).filter(Boolean))];
       const firstLed = samples.find((sample) => sample.lightStage === 'led'), firstHeadlights = samples.find((sample) => sample.lightStage === 'headlights');
-      suite.check(`${device} the closed hood is followed by LED running lights and then headlights`, lightStages.join(',') === 'off,led,headlights' && samples.some((sample) => sample.frameIndex === 46 && sample.lightStage === 'off') && firstLed?.frameIndex === 46 && firstLed.mediaTime >= 2.15 && firstLed.mediaTime < 2.3 && firstHeadlights?.frameIndex === 47 && firstHeadlights.mediaTime >= 2.85 && firstHeadlights.mediaTime < 3 && firstHeadlights.mediaTime - firstLed.mediaTime >= .6, { lightStages, firstLed, firstHeadlights });
+      suite.check(`${device} the closed hood is followed by LED running lights and then headlights without replacing its pose`, lightStages.join(',') === 'off,led,headlights' && samples.some((sample) => sample.frameIndex === 46 && sample.lightStage === 'off') && firstLed?.frameIndex === 46 && firstLed.mediaTime >= 2.15 && firstLed.mediaTime < 2.3 && firstHeadlights?.frameIndex === 46 && firstHeadlights.mediaTime >= 2.85 && firstHeadlights.mediaTime < 3 && firstHeadlights.mediaTime - firstLed.mediaTime >= .6, { lightStages, firstLed, firstHeadlights });
       const lightPixels = await page.evaluate(() => {
         const snapshots = window.hoodLightSnapshots;
         if (!['off', 'led', 'headlights'].every((stage) => snapshots[stage])) return { captured: Object.keys(snapshots) };
         const regions = [
           { name: 'near LED rail', box: [408, 317, 119, 18], role: 'rail' },
-          { name: 'far LED rail', box: [117, 295, 47, 27], role: 'rail' },
-          { name: 'near projector core', box: [491, 309, 10, 10], role: 'projector' },
-          { name: 'far projector core', box: [135, 302, 6, 5], role: 'projector' }
+          { name: 'far LED rail', box: [103, 297, 47, 27], role: 'rail' },
+          { name: 'near projector core', box: [499, 305, 9, 9], role: 'projector' },
+          { name: 'far projector core', box: [116, 303, 7, 7], role: 'projector' }
         ];
         const luminance = (pixels, i) => .2126 * pixels[i] + .7152 * pixels[i + 1] + .0722 * pixels[i + 2];
         return { captured: Object.keys(snapshots), regions: regions.map((region) => {
@@ -256,10 +343,47 @@ await suite.run(async (browser) => {
         }) };
       });
       suite.check(`${device} LED rails brighten while both projector cores stay dark until headlights ignite`, lightPixels.regions?.filter((region) => region.role === 'rail').every((region) => region.ledLit > 10) && lightPixels.regions?.filter((region) => region.role === 'projector').every((region) => region.ledDelta < 2 && region.ledLit === 0 && region.headlightDelta > 20), lightPixels);
+      const lightGeometry = await page.evaluate(() => {
+        const snapshots = window.hoodLightSnapshots;
+        if (!['off', 'led', 'headlights'].every((stage) => snapshots[stage])) return { captured: Object.keys(snapshots) };
+        // Light may alter the lamps and their bounded soft spill. All other
+        // body pixels, including the roof/cowl, must stay literally fixed.
+        const support = [34, 225, 628, 502];
+        return { captured: Object.keys(snapshots), stages: ['led', 'headlights'].map((stage) => {
+          const before = snapshots.off.pixels, after = snapshots[stage].pixels;
+          let alphaChanged = 0, outsideLightChanged = 0, changed = 0;
+          const protectedRegions = [
+            { name: 'roof', box: [540, 130, 250, 55] },
+            { name: 'cowl', box: [440, 205, 100, 20] },
+            { name: 'windshield', box: [550, 160, 100, 60] },
+            { name: 'front wheel', box: [587, 353, 70, 102] },
+            { name: 'rear wheel', box: [916, 339, 32, 78] },
+            { name: 'door', box: [750, 300, 110, 80] }
+          ].map((region) => ({ ...region, changed: 0, opaque: 0 }));
+          for (let i = 0; i < before.length; i += 4) {
+            const x = (i / 4) % 1080, y = Math.floor(i / 4 / 1080);
+            if (before[i + 3] !== after[i + 3]) alphaChanged++;
+            const differs = [0, 1, 2].some((channel) => before[i + channel] !== after[i + channel]);
+            if (differs) {
+              changed++;
+              if (x < support[0] || x >= support[2] || y < support[1] || y >= support[3]) outsideLightChanged++;
+            }
+            for (const region of protectedRegions) {
+              const [left, top, width, height] = region.box;
+              if (x < left || x >= left + width || y < top || y >= top + height) continue;
+              if (before[i + 3] > 240) region.opaque++;
+              if (differs || before[i + 3] !== after[i + 3]) region.changed++;
+            }
+          }
+          return { stage, frameIndex: snapshots[stage].frameIndex, alphaChanged, outsideLightChanged, changed, protectedRegions };
+        }) };
+      });
+      suite.check(`${device} switching lights preserves every silhouette pixel and all body pixels outside the lamp spill`, lightGeometry.stages?.every((stage) => stage.frameIndex === 46 && stage.alphaChanged === 0 && stage.outsideLightChanged === 0 && stage.changed > 20), lightGeometry);
+      suite.check(`${device} roof, cowl, windshield, wheels, and door stay fixed when the lights ignite`, lightGeometry.stages?.every((stage) => stage.protectedRegions.every((region) => region.changed === 0 && region.opaque > 0)), lightGeometry);
       const phases = [...new Set(samples.map((s) => s.phase).filter(Boolean))];
       suite.check(`${device} sequence advances from decoded open frame through closing to complete`, ['open', 'closing', 'complete'].every((phase, index, order) => phases.includes(phase) && (!index || phases.indexOf(phase) > phases.indexOf(order[index - 1]))), phases);
       const indices = samples.filter((sample) => ['open', 'closing', 'complete'].includes(sample.phase)).map((sample) => sample.frameIndex);
-      suite.check(`${device} the base, LED layer, and four atlases load once with no frame reversal or replay`, basePaths.size === 1 && ledPaths.size === 1 && atlasPaths.size === 4 && indices[0] === 0 && indices.at(-1) === 47 && indices.some((index) => index > 11 && index < 36) && indices.every((index, position) => Number.isInteger(index) && index >= 0 && index <= 47 && (!position || index >= indices[position - 1])), { base: [...basePaths], led: [...ledPaths], atlases: [...atlasPaths], indices: [...new Set(indices)] });
+      suite.check(`${device} the base, both light layers, and four atlases load once with no frame reversal or replay`, basePaths.size === 1 && ledPaths.size === 1 && headlightPaths.size === 1 && atlasPaths.size === 4 && indices[0] === 0 && indices.at(-1) === 46 && indices.some((index) => index > 11 && index < 36) && indices.every((index, position) => Number.isInteger(index) && index >= 0 && index <= 46 && (!position || index >= indices[position - 1])), { base: [...basePaths], led: [...ledPaths], headlights: [...headlightPaths], atlases: [...atlasPaths], indices: [...new Set(indices)] });
       const moving = samples.filter((sample) => ['open', 'closing', 'complete'].includes(sample.phase));
       const shifted = moving.find((sample) => sample.body.some((value, index) => Math.abs(value - moving[0].body[index]) >= .1));
       suite.check(`${device} canvas stage position and dimensions remain fixed throughout playback`, moving.length > 10 && !shifted, { initial: moving[0], shifted });
@@ -344,7 +468,7 @@ await suite.run(async (browser) => {
     let requests = 0;
     page.on('request', (request) => { if (isMotionAsset(request.url())) requests++; });
     await navigate(page, suite.url()); await waitForSteadyLights(page);
-    suite.check('reduced motion shows a decoded final photograph without fetching video, base, LED layer, or frame atlases', requests === 0 && await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
+    suite.check('reduced motion shows a decoded final photograph without fetching video, base, light layers, or frame atlases', requests === 0 && await page.locator('#hero-car').evaluate((car) => car.dataset.phase === 'complete' && car.dataset.frame === 'poster' && car.classList.contains('lights-on')));
   } finally { await reduced.close(); }
 
   const changedPreference = await newContext(browser);
@@ -357,7 +481,7 @@ await suite.run(async (browser) => {
     suite.check('enabling reduced motion during closure immediately stops video on the final poster', await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.querySelector('.rs5-source').paused));
   } finally { await changedPreference.close(); }
 
-  for (const failure of ['missing', 'corrupt', 'missing base', 'missing atlas', 'missing LED', 'autoplay']) {
+  for (const failure of ['missing', 'corrupt', 'missing base', 'missing atlas', 'missing LED', 'missing headlights', 'autoplay']) {
     const context = await newContext(browser);
     try {
       if (failure === 'autoplay') await context.addInitScript(() => { HTMLMediaElement.prototype.play = function () { return Promise.reject(Object.assign(new Error('Playback intentionally blocked'), { name: 'NotAllowedError' })); }; });
@@ -367,6 +491,7 @@ await suite.run(async (browser) => {
       if (failure === 'missing base') await page.route('**/assets/car-studio-base.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
       if (failure === 'missing atlas') await page.route('**/assets/car-hood-frames-2.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
       if (failure === 'missing LED') await page.route('**/assets/car-led.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
+      if (failure === 'missing headlights') await page.route('**/assets/car-headlights.webp*', (route) => route.fulfill({ status: 404, contentType: 'image/webp', body: '' }));
       await navigate(page, suite.url()); await waitForSteadyLights(page);
       suite.check(`${failure} media safely resolves to the visible final photograph`, await page.locator('#hero-car').evaluate((car) => car.dataset.frame === 'poster' && car.dataset.phase === 'complete' && car.classList.contains('lights-on') && !car.classList.contains('hood-loading') && car.querySelector('.rs5-source').paused));
     } finally { await context.close(); }
