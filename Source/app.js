@@ -189,9 +189,8 @@
     const settled = heroLightsPlayed || reduceMotion();
     return `<div class="hero-visual" aria-hidden="true">
       <div class="hero-car rs5-real-hero ${settled ? 'lights-on' : 'lights-pending hood-loading'}" id="hero-car" data-phase="${settled ? 'complete' : 'loading'}" data-frame="poster">
-        <img class="rs5-floor" src="assets/car-floor.webp?v=20261025-original-body" width="1080" height="600" alt="" decoding="async">
-        <img class="rs5-poster" src="assets/car-hood-closed.webp?v=20261025-original-body" width="1080" height="600" alt="" fetchpriority="high" decoding="async">
-        <video class="rs5-source" id="rs5SourceVideo" data-src="assets/car-hood-animation.mp4?v=20261025-original-body" muted playsinline preload="none" tabindex="-1"></video>
+        <img class="rs5-floor" src="assets/car-floor.webp?v=20261027-motion" width="1080" height="600" alt="" decoding="async">
+        <img class="rs5-poster" src="assets/car-hood-closed.webp?v=20261027-motion" width="1080" height="600" alt="" fetchpriority="high" decoding="async">
         <canvas id="rs5HeroCanvas" width="1080" height="600" class="rs5-canvas"></canvas>
         <canvas width="1080" height="840" class="rs5-smoke"></canvas>
       </div>
@@ -210,13 +209,17 @@
     if (heroLightsPlayed || reduceMotion()) { settleHero(car); return; }
     try {
       heroRenderer = window.WHHood?.create({
-        canvas: $('.rs5-canvas', car), smokeCanvas: $('.rs5-smoke', car), video: $('.rs5-source', car),
+        canvas: $('.rs5-canvas', car), smokeCanvas: $('.rs5-smoke', car),
         frames: {
-          headlights: 'assets/car-headlights.webp?v=20261025-original-body',
-          led: 'assets/car-led.webp?v=20261025-original-body', ledAt: 2.15, headlightsAt: 2.85,
-          base: 'assets/car-studio-base.webp?v=20261025-original-body',
-          sources: [1,2,3,4].map((part) => `assets/car-hood-frames-${part}.webp?v=20261025-original-body`),
-          width: 1080, height: 600, columns: 3, perSheet: 12, count: 48, fps: 24
+          headlights: 'assets/car-headlights.webp?v=20261027-motion',
+          led: 'assets/car-led.webp?v=20261027-motion', ledAt: 2.15, headlightsAt: 2.85,
+          base: 'assets/car-studio-base.webp?v=20261027-motion',
+          sources: [1,2,3,4].map((part) => `assets/car-hood-frames-${part}.webp?v=20261027-motion`),
+          width: 1080, height: 600, columns: 3, perSheet: 12, count: 48,
+          // Timeline in seconds; progress = measured closing travel of recorded poses 0..46.
+          closeAt: .05, latchAt: 1.2, duration: 3.5,
+          ledSweeps: [[155, 96], [395, 545]],
+          progress: [0,.0236,.047,.0709,.0946,.1178,.1432,.1719,.2009,.2302,.2616,.29,.3194,.3511,.3875,.4172,.4491,.4815,.5171,.5471,.5769,.6065,.6466,.6732,.7053,.7247,.7618,.7781,.7996,.8172,.8493,.8619,.8747,.8888,.9113,.9254,.9392,.9501,.9657,.9746,.9811,.9869,.9941,.9953,.9964,.9986,1]
         },
         onPhase: (phase) => {
           if (!car.isConnected) return;

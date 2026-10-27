@@ -1,4 +1,4 @@
-/* Play prepared photographic car frames, then retain their final pose. */
+/* Photographic hood closure on a time-based clock: eased, blended between recorded poses, then lights. */
 (() => {
   'use strict';
 
@@ -38,10 +38,13 @@
     }
     const clear = () => context.clearRect(0, 0, canvas.width, canvas.height);
     return {
-      paint(time, index) {
+      // `until` is when the bonnet latches: the plume thins as the gap closes
+      // and is gone shortly after, instead of floating over a shut bonnet.
+      paint(time, index, until = 2) {
         clear();
-        if (time <= 0 || time >= 2 || index >= 47 || !sprites.length) return;
-        const fade = Math.max(0, Math.min(1, (2 - time) / 0.75));
+        const end = until + .4;
+        if (time <= 0 || time >= end || index >= 47 || !sprites.length) return;
+        const fade = Math.max(0, Math.min(1, (end - time) / .7));
         const envelope = Math.min(1, time / 0.18) * fade * fade * (3 - 2 * fade);
         context.save(); context.scale(canvas.width / 1080, canvas.height / 840);
         // The extra 240px is above the photographic stage, so the plume can
@@ -52,7 +55,7 @@
           if (age <= 0 || age >= life) continue;
           const size = 52 + age * (90 + (puff % 3) * 12);
           const x = (puff % 2 ? 420 : 340) - age * (48 + (puff % 3) * 8) + Math.sin(age * 3.5 + puff) * 14;
-          const y = 255 - age * (150 + (puff % 4) * 11);
+          const y = 255 - age * (96 + (puff % 4) * 9);
           context.save(); context.translate(x, y); context.rotate(Math.sin(puff * 2.1 + age) * 0.38);
           context.globalAlpha = Math.pow(Math.sin(Math.PI * age / life), 1.4) * 0.42 * envelope;
           context.drawImage(sprites[puff % 4], -size / 2, -size * 0.44, size, size * 0.88);
@@ -64,30 +67,47 @@
     };
   }
 
-  function create({ canvas, smokeCanvas, video, frames, onPhase, onError }) {
-    if (!frames || typeof frames.base !== 'string' || !frames.base.length ||
-        typeof frames.led !== 'string' || !frames.led.length ||
-        typeof frames.headlights !== 'string' || !frames.headlights.length ||
-        !Number.isFinite(frames.ledAt) || !Number.isFinite(frames.headlightsAt) ||
-        !Array.isArray(frames.sources) || !frames.sources.length ||
-        !frames.sources.every((source) => typeof source === 'string' && source.length > 0) ||
-        !['width', 'height', 'columns', 'perSheet', 'count'].every((key) => Number.isInteger(frames[key]) && frames[key] > 0) ||
-        !Number.isFinite(frames.fps) || frames.fps <= 0 ||
-        frames.ledAt <= (frames.count - 2) / frames.fps || frames.headlightsAt <= frames.ledAt ||
-        frames.perSheet % frames.columns !== 0 ||
-        frames.sources.length !== Math.ceil(frames.count / frames.perSheet)) return null;
-    let context;
-    try { context = canvas?.getContext('2d', { alpha: true }); } catch (_) { return null; }
-    if (!context || !video) return null;
+  // Timeline (seconds after the open pose is released). The recorded hood
+  // poses are placed by measured closing progress, so the hood follows a
+  // gravity curve, latches with a small rebound and settles the suspension.
+  const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
+  const smooth = (v) => { v = clamp(v); return v * v * (3 - 2 * v); };
+
+  function create({ canvas, smokeCanvas, frames, onPhase, onError }) {
+    const f = frames;
+    if (!f || typeof f.base !== 'string' || !f.base.length ||
+        typeof f.led !== 'string' || !f.led.length ||
+        typeof f.headlights !== 'string' || !f.headlights.length ||
+        !Number.isFinite(f.ledAt) || !Number.isFinite(f.headlightsAt) || !Number.isFinite(f.duration) ||
+        !Number.isFinite(f.closeAt) || !Number.isFinite(f.latchAt) ||
+        !Array.isArray(f.sources) || !f.sources.length ||
+        !f.sources.every((source) => typeof source === 'string' && source.length > 0) ||
+        !['width', 'height', 'columns', 'perSheet', 'count'].every((key) => Number.isInteger(f[key]) && f[key] > 0) ||
+        !Array.isArray(f.progress) || f.progress.length !== f.count - 1 ||
+        !f.progress.every((value, i) => Number.isFinite(value) && (!i || value >= f.progress[i - 1])) ||
+        f.closeAt < 0 || f.latchAt <= f.closeAt || f.ledAt <= f.latchAt || f.headlightsAt <= f.ledAt || f.duration <= f.headlightsAt ||
+        f.perSheet % f.columns !== 0 || f.sources.length !== Math.ceil(f.count / f.perSheet)) return null;
+    let context, mix, mixContext, lamp, lampContext;
+    try {
+      context = canvas?.getContext('2d', { alpha: true });
+      mix = document.createElement('canvas'); mix.width = f.width; mix.height = f.height;
+      mixContext = mix.getContext('2d', { alpha: true });
+      lamp = document.createElement('canvas'); lamp.width = f.width; lamp.height = f.height;
+      lampContext = lamp.getContext('2d', { alpha: true });
+    } catch (_) { return null; }
+    if (!context || !mixContext || !lampContext) return null;
     let smoke;
     try { smoke = createSmoke(smokeCanvas); } catch (_) { smoke = null; }
 
-    const timeouts = new Set(), listeners = [], pending = new Set(), atlases = [];
+    const last = f.count - 2;                     // the final recorded closed pose
+    const progress = f.progress;
+    const sweeps = Array.isArray(f.ledSweeps) ? f.ledSweeps : [];
+    const timeouts = new Set(), listeners = [], atlases = [];
     const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     let stopped = false, failed = false, prepared = false, requested = false;
-    let closing = false, finishing = false, complete = false, preparing;
-    let frame = 0, frameIsVideo = false, hold = 0, holdStarted = 0, remaining = 300;
-    let resume = false, playAttempt = 0, base, led, headlights;
+    let closing = false, complete = false, preparing;
+    let raf = 0, hold = 0, holdStarted = 0, remaining = 300;
+    let elapsed = 0, resumedAt = 0, running = false, base, led, headlights;
 
     const later = (fn, delay) => {
       const id = setTimeout(() => { timeouts.delete(id); fn(); }, delay);
@@ -96,184 +116,167 @@
     const clearLater = (id) => { clearTimeout(id); timeouts.delete(id); };
     const listen = (target, name, callback) => {
       target.addEventListener(name, callback);
-      const remove = () => target.removeEventListener(name, callback);
-      listeners.push(remove); return remove;
-    };
-    const cancelFrame = () => {
-      if (frame) {
-        if (frameIsVideo) video.cancelVideoFrameCallback?.(frame);
-        else cancelAnimationFrame(frame);
-      }
-      frame = 0;
+      listeners.push(() => target.removeEventListener(name, callback));
     };
     const cancelWork = () => {
-      cancelFrame();
+      if (raf) cancelAnimationFrame(raf); raf = 0; running = false;
       timeouts.forEach(clearTimeout); timeouts.clear(); hold = 0;
-      pending.forEach((cancel) => cancel()); pending.clear();
     };
-    const releaseAtlases = () => {
+    const release = (image) => { if (image) { image.onload = null; image.onerror = null; image.removeAttribute('src'); } };
+    const releaseImages = () => {
       smoke?.destroy(); smoke = null;
-      atlases.forEach((atlas) => {
-        atlas.onload = null; atlas.onerror = null;
-        atlas.removeAttribute('src');
-      });
-      atlases.length = 0;
-      if (base) {
-        base.onload = null; base.onerror = null;
-        base.removeAttribute('src'); base = null;
-      }
-      if (led) {
-        led.onload = null; led.onerror = null;
-        led.removeAttribute('src'); led = null;
-      }
-      if (headlights) {
-        headlights.onload = null; headlights.onerror = null;
-        headlights.removeAttribute('src'); headlights = null;
-      }
+      atlases.forEach(release); atlases.length = 0;
+      release(base); release(led); release(headlights); base = led = headlights = null;
+      mix.width = mix.height = 0; lamp.width = lamp.height = 0;
     };
     const phase = (name) => { if (!stopped && !failed) onPhase?.(name); };
     const fail = () => {
       if (stopped || failed || complete) return;
-      failed = true; playAttempt++; resume = false;
-      video.pause(); cancelWork();
-      releaseAtlases();
-      onError?.();
+      failed = true; cancelWork(); releaseImages(); onError?.();
     };
-    const paint = (mediaTime = video.currentTime) => {
-      if (stopped || failed || video.readyState < 2 || !video.videoWidth || !Number.isFinite(mediaTime)) return false;
+
+    // Closing progress 0..1 (with the latch rebound) at timeline time t.
+    const hoodProgress = (t) => {
+      if (t <= f.closeAt) return 0;
+      if (t < f.latchAt) {
+        const u = (t - f.closeAt) / (f.latchAt - f.closeAt);
+        return .14 * u + .86 * Math.pow(u, 2.35);   // released by hand, then gravity
+      }
+      const k = t - f.latchAt;                       // latch rebound, ~0.3s
+      return k >= .32 ? 1 : 1 - .028 * Math.sin(Math.PI * k / .16) * Math.exp(-k / .09) * (k < .16 ? 1 : .35);
+    };
+    // Recorded pose as a fractional index into the measured progress table.
+    const poseAt = (p) => {
+      if (p <= 0) return 0;
+      if (p >= 1) return last;
+      let i = 0;
+      while (i < last && progress[i + 1] < p) i++;
+      const span = progress[i + 1] - progress[i];
+      return span > 0 ? i + (p - progress[i]) / span : i;
+    };
+    // Suspension dip after the hood latches, in source pixels (positive = down).
+    const bodyDip = (t) => {
+      const k = t - f.latchAt;
+      if (k <= 0 || k > .7) return 0;
+      const dip = 4 * Math.exp(-k / .11) * Math.sin(2 * Math.PI * k / .24);
+      return Math.abs(dip) < .05 ? 0 : Math.round(dip * 100) / 100;
+    };
+    // Xenon ignition: a short strike, a dip, then a smooth climb to full output.
+    const headlightLevel = (t) => {
+      const k = t - f.headlightsAt;
+      if (k <= 0) return 0;
+      if (k < .05) return k / .05 * .9;
+      if (k < .11) return .9 - (k - .05) / .06 * .55;
+      return Math.min(1, .35 + .65 * smooth((k - .11) / .32));
+    };
+    const cell = (index) => {
+      const atlas = atlases[Math.floor(index / f.perSheet)], c = index % f.perSheet;
+      return [atlas, (c % f.columns) * f.width, Math.floor(c / f.columns) * f.height];
+    };
+    const drawLeds = (t, target) => {
+      const k = t - f.ledAt;
+      if (k <= 0) return;
+      if (!sweeps.length) {
+        target.save(); target.globalAlpha = Math.min(1, k / .12); target.drawImage(led, 0, 0, f.width, f.height); target.restore();
+        return;
+      }
+      // Each strip lights from its inner end towards the wing, with a soft edge:
+      // paint the reveal mask first, then keep the LED layer only inside it.
+      lampContext.globalCompositeOperation = 'source-over';
+      lampContext.clearRect(0, 0, f.width, f.height);
+      const reach = smooth(k / .42), soft = 18;
+      for (const [from, to] of sweeps) {
+        const head = from + (to - from) * reach, dir = Math.sign(to - from) || 1;
+        const g = lampContext.createLinearGradient(head - dir * soft, 0, head + dir * soft, 0);
+        g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        lampContext.fillStyle = reach >= 1 ? '#000' : g;
+        const x0 = Math.min(from, to) - soft - 4, x1 = Math.max(from, to) + soft + 4;
+        lampContext.fillRect(x0, 0, x1 - x0, f.height);
+      }
+      lampContext.globalCompositeOperation = 'source-in';
+      lampContext.drawImage(led, 0, 0, f.width, f.height);
+      lampContext.globalCompositeOperation = 'source-over';
+      target.drawImage(lamp, 0, 0);
+    };
+    const paint = (t) => {
+      if (stopped || failed || !Number.isFinite(t)) return false;
       try {
-        const lightStage = mediaTime >= frames.headlightsAt ? 'headlights' : mediaTime >= frames.ledAt ? 'led' : 'off';
-        // Hold the same recorded closed pose through ignition. Replacing it
-        // with the later illuminated recording would move the whole front.
-        const index = Math.max(0, Math.min(frames.count - 2, Math.floor(mediaTime * frames.fps + .05)));
-        const atlas = atlases[Math.floor(index / frames.perSheet)], cell = index % frames.perSheet;
-        if (!base?.naturalWidth || !atlas?.naturalWidth || !led?.naturalWidth || !headlights?.naturalWidth) return false;
+        if (!base?.naturalWidth || !led?.naturalWidth || !headlights?.naturalWidth || atlases.some((a) => !a?.naturalWidth)) return false;
+        const pose = poseAt(hoodProgress(t));
+        const lower = Math.floor(pose), upper = Math.min(last, lower + 1), w = pose - lower;
+        const dip = bodyDip(t);
+        const lightStage = t >= f.headlightsAt ? 'headlights' : t >= f.ledAt ? 'led' : 'off';
         context.clearRect(0, 0, canvas.width, canvas.height);
+        context.save(); context.translate(0, dip);
         context.drawImage(base, 0, 0, canvas.width, canvas.height);
-        context.drawImage(atlas, (cell % frames.columns) * frames.width,
-          Math.floor(cell / frames.columns) * frames.height, frames.width, frames.height,
-          0, 0, canvas.width, canvas.height);
-        if (lightStage !== 'off') {
-          context.save(); context.globalAlpha = Math.min(1, (mediaTime - frames.ledAt) / .12);
-          context.drawImage(led, 0, 0, canvas.width, canvas.height); context.restore();
+        if (w < .002 || upper === lower) {
+          const [atlas, sx, sy] = cell(lower);
+          context.drawImage(atlas, sx, sy, f.width, f.height, 0, 0, canvas.width, canvas.height);
+        } else {
+          // Linear blend of two neighbouring recorded poses (premultiplied sum),
+          // so the 24fps recording moves smoothly on 60–120Hz screens.
+          mixContext.clearRect(0, 0, f.width, f.height);
+          mixContext.globalCompositeOperation = 'lighter';
+          const [a1, x1, y1] = cell(lower), [a2, x2, y2] = cell(upper);
+          mixContext.globalAlpha = 1 - w; mixContext.drawImage(a1, x1, y1, f.width, f.height, 0, 0, f.width, f.height);
+          mixContext.globalAlpha = w; mixContext.drawImage(a2, x2, y2, f.width, f.height, 0, 0, f.width, f.height);
+          mixContext.globalAlpha = 1; mixContext.globalCompositeOperation = 'source-over';
+          context.drawImage(mix, 0, 0, canvas.width, canvas.height);
         }
-        if (lightStage === 'headlights') context.drawImage(headlights, 0, 0, canvas.width, canvas.height);
-        canvas.dataset.mediaTime = Number(mediaTime).toFixed(4);
-        canvas.dataset.frameIndex = String(index);
+        drawLeds(t, context);
+        const level = headlightLevel(t);
+        // The running lights read brighter on their own; the extra pass hands
+        // over to the headlights so the final frame equals the lit poster.
+        const boost = t >= f.ledAt ? .85 * (1 - level) : 0;
+        if (boost > .01) { context.globalAlpha = boost; drawLeds(t, context); context.globalAlpha = 1; }
+        if (level > 0) { context.globalAlpha = level; context.drawImage(headlights, 0, 0, canvas.width, canvas.height); context.globalAlpha = 1; }
+        context.restore();
+        canvas.dataset.mediaTime = t.toFixed(4);
+        canvas.dataset.frameIndex = String(Math.round(pose));
+        canvas.dataset.pose = pose.toFixed(3);
+        canvas.dataset.dip = dip.toFixed(2);
         canvas.dataset.lightStage = lightStage;
-        smoke?.paint(mediaTime, index);
+        smoke?.paint(t, Math.round(pose), f.latchAt);
         return true;
       } catch (_) { return false; }
     };
 
-    // Video supplies the clock; only its recorded hood and engine pixels move.
-    // Lamps, fenders, bumpers, wheels and glass retain the original photograph.
-    // A redundant seek on a non-seekable response can jump back to the start.
-    // The seeked path is only needed if completion precedes the ended state.
-    const freezeLastFrame = () => {
-      const target = Math.max(0, video.duration - 1 / 24);
-      if (video.ended && video.readyState >= 2) return Promise.resolve(paint(target));
-      return new Promise((resolve) => {
-      let settled = false, seeked = false, fallback = 0, decoded = 0;
-      const remove = () => {
-        video.removeEventListener('seeked', afterSeek);
-        if (fallback) cancelAnimationFrame(fallback);
-        if (decoded) video.cancelVideoFrameCallback?.(decoded);
-        clearLater(timeout); pending.delete(cancel);
-      };
-      const finish = (ok) => {
-        if (settled) return;
-        settled = true; remove(); resolve(ok);
-      };
-      const cancel = () => finish(false);
-      const draw = (mediaTime = target) => {
-        if (stopped || failed) { finish(false); return; }
-        if (!seeked || Math.abs(video.currentTime - target) > 1 / 48) return;
-        finish(paint(mediaTime));
-      };
-      const afterSeek = () => {
-        seeked = true;
-        fallback = requestAnimationFrame(() => { fallback = 0; draw(); });
-      };
-      const timeout = later(() => finish(false), 10000);
-      pending.add(cancel);
-      video.addEventListener('seeked', afterSeek);
-      if (video.requestVideoFrameCallback) {
-        decoded = video.requestVideoFrameCallback((_, metadata) => {
-          decoded = 0;
-          if (Math.abs(metadata.mediaTime - target) <= 1 / 24) draw(metadata.mediaTime);
-        });
+    const now = () => (running ? elapsed + (performance.now() - resumedAt) / 1000 : elapsed);
+    const tick = () => {
+      raf = 0;
+      if (stopped || failed || complete || !running) return;
+      const t = Math.min(f.duration, now());
+      if (!paint(t)) { fail(); return; }
+      if (t >= f.duration) {
+        complete = true; running = false;
+        releaseImages(); phase('complete'); return;
       }
-      try {
-        if (Math.abs(video.currentTime - target) < .0001 && !video.seeking) afterSeek();
-        else video.currentTime = target;
-      } catch (_) { finish(false); }
-      });
+      raf = requestAnimationFrame(tick);
     };
-
-    const finishPlayback = async () => {
-      if (stopped || failed || finishing || complete) return;
-      finishing = true; resume = false; playAttempt++;
-      video.pause(); cancelFrame();
-      if (!await freezeLastFrame()) { if (!stopped) fail(); return; }
-      if (stopped || failed) return;
-      complete = true;
-      // drawImage copied the final pixels; release the base and decoded sheets.
-      releaseAtlases(); phase('complete');
+    const start = () => {
+      if (stopped || failed || complete || running || document.hidden) return;
+      if (!closing) { closing = true; phase('closing'); }
+      running = true; resumedAt = performance.now();
+      raf = requestAnimationFrame(tick);
     };
-    const drawFrames = () => {
-      if (stopped || failed || finishing || complete || document.hidden || video.paused) return;
-      frameIsVideo = Boolean(video.requestVideoFrameCallback);
-      if (frameIsVideo) {
-        frame = video.requestVideoFrameCallback((_, metadata) => {
-          frame = 0;
-          if (stopped || failed || finishing || document.hidden) return;
-          if (!paint(metadata.mediaTime)) { fail(); return; }
-          if (video.ended) finishPlayback(); else drawFrames();
-        });
-      } else {
-        frame = requestAnimationFrame(() => {
-          frame = 0;
-          if (stopped || failed || finishing || document.hidden) return;
-          if (!paint()) { fail(); return; }
-          if (video.ended) finishPlayback(); else drawFrames();
-        });
-      }
-    };
-    const startVideo = () => {
-      if (stopped || failed || finishing || complete || document.hidden) { resume = true; return; }
-      resume = false;
-      const attempt = ++playAttempt;
-      let playing;
-      try { playing = video.play(); } catch (_) { fail(); return; }
-      Promise.resolve(playing).then(() => {
-        if (stopped || failed || finishing || attempt !== playAttempt) return;
-        if (document.hidden) { resume = true; video.pause(); return; }
-        if (!closing) { closing = true; phase('closing'); }
-        cancelFrame(); drawFrames();
-      }, () => { if (attempt === playAttempt) fail(); });
+    const pause = () => {
+      if (!running) return;
+      elapsed = now(); running = false;
+      if (raf) cancelAnimationFrame(raf); raf = 0;
     };
     const scheduleHold = () => {
       if (!prepared || !requested || stopped || failed || closing || hold || document.hidden) return;
       holdStarted = performance.now();
-      hold = later(() => { hold = 0; remaining = 0; startVideo(); }, remaining);
+      hold = later(() => { hold = 0; remaining = 0; start(); }, remaining);
     };
     listen(document, 'visibilitychange', () => {
-      if (stopped || failed || complete || finishing) return;
+      if (stopped || failed || complete) return;
       if (document.hidden) {
-        if (hold) {
-          remaining = Math.max(0, remaining - (performance.now() - holdStarted));
-          clearLater(hold); hold = 0;
-        }
-        if (closing || !video.paused) {
-          // Ignore an interrupted play() promise while the tab is hidden.
-          resume = true; playAttempt++; video.pause(); cancelFrame();
-        }
-      } else if (resume && requested) startVideo();
+        if (hold) { remaining = Math.max(0, remaining - (performance.now() - holdStarted)); clearLater(hold); hold = 0; }
+        pause();
+      } else if (closing) start();
       else scheduleHold();
     });
-    listen(video, 'ended', finishPlayback);
-    listen(video, 'error', fail);
     const motionChanged = () => { if (preference.matches) fail(); };
     if (preference?.addEventListener) listen(preference, 'change', motionChanged);
     else if (preference?.addListener) {
@@ -285,94 +288,41 @@
       if (preparing) return preparing;
       preparing = new Promise((resolve) => {
         if (stopped || failed || preference?.matches) { resolve(false); return; }
-        const source = video.dataset.src || video.getAttribute('src');
-        if (!source) { resolve(false); return; }
-        let settled = false, videoReady = false, decoded = 0;
-        const remove = () => {
-          video.removeEventListener('loadeddata', loaded);
-          video.removeEventListener('error', error);
-          atlases.forEach((atlas) => { atlas.onload = null; atlas.onerror = null; });
-          if (base) { base.onload = null; base.onerror = null; }
-          if (led) { led.onload = null; led.onerror = null; }
-          if (headlights) { headlights.onload = null; headlights.onerror = null; }
-          clearLater(timeout); pending.delete(cancel);
-        };
+        let settled = false, decoded = 0;
+        const total = f.sources.length + 3;
         const finish = (ok) => {
           if (settled) return;
-          settled = true; remove();
-          if (!ok) releaseAtlases();
+          settled = true; clearLater(timeout);
+          if (!ok) releaseImages();
           resolve(ok);
         };
-        const cancel = () => finish(false);
-        const error = () => finish(false);
         const ready = () => {
-          if (settled || stopped || failed || !videoReady || decoded !== frames.sources.length + 3) return;
-          canvas.width = frames.width; canvas.height = frames.height;
-          if (!paint()) { finish(false); return; }
+          if (settled || stopped || failed || decoded !== total) return;
+          canvas.width = f.width; canvas.height = f.height;
+          if (!paint(0)) { finish(false); return; }
           prepared = true; phase('open'); finish(true); scheduleHold();
         };
-        const loaded = () => {
-          if (!Number.isFinite(video.duration) || video.duration <= frames.headlightsAt || !video.videoWidth || !video.videoHeight) { finish(false); return; }
-          videoReady = true; ready();
-        };
         const timeout = later(() => finish(false), 10000);
-        pending.add(cancel);
-        video.addEventListener('loadeddata', loaded);
-        video.addEventListener('error', error);
-        base = new Image(); base.decoding = 'async';
-        base.onerror = error;
-        base.onload = () => {
-          const afterDecode = () => {
-            if (settled || stopped || failed) return;
-            if (base.naturalWidth !== frames.width || base.naturalHeight !== frames.height) { finish(false); return; }
-            decoded++; ready();
-          };
-          if (base.decode) base.decode().then(afterDecode, error);
-          else afterDecode();
-        };
-        base.src = frames.base;
-        led = new Image(); led.decoding = 'async';
-        led.onerror = error;
-        led.onload = () => {
-          const afterDecode = () => {
-            if (settled || stopped || failed) return;
-            if (led.naturalWidth !== frames.width || led.naturalHeight !== frames.height) { finish(false); return; }
-            decoded++; ready();
-          };
-          if (led.decode) led.decode().then(afterDecode, error);
-          else afterDecode();
-        };
-        led.src = frames.led;
-        headlights = new Image(); headlights.decoding = 'async';
-        headlights.onerror = error;
-        headlights.onload = () => {
-          const afterDecode = () => {
-            if (settled || stopped || failed) return;
-            if (headlights.naturalWidth !== frames.width || headlights.naturalHeight !== frames.height) { finish(false); return; }
-            decoded++; ready();
-          };
-          if (headlights.decode) headlights.decode().then(afterDecode, error);
-          else afterDecode();
-        };
-        headlights.src = frames.headlights;
-        frames.sources.forEach((source, index) => {
-          const atlas = new Image(); atlases[index] = atlas; atlas.decoding = 'async';
-          atlas.onerror = error;
-          atlas.onload = () => {
-            const afterDecode = () => {
+        const load = (src, width, height) => {
+          const image = new Image(); image.decoding = 'async';
+          image.onerror = () => finish(false);
+          image.onload = () => {
+            const done = () => {
               if (settled || stopped || failed) return;
-              if (atlas.naturalWidth !== frames.width * frames.columns ||
-                  atlas.naturalHeight !== frames.height * Math.ceil(frames.perSheet / frames.columns)) { finish(false); return; }
+              if (image.naturalWidth !== width || image.naturalHeight !== height) { finish(false); return; }
               decoded++; ready();
             };
-            if (atlas.decode) atlas.decode().then(afterDecode, error);
-            else afterDecode();
+            if (image.decode) image.decode().then(done, () => finish(false)); else done();
           };
-          atlas.src = source;
+          image.src = src;
+          return image;
+        };
+        base = load(f.base, f.width, f.height);
+        led = load(f.led, f.width, f.height);
+        headlights = load(f.headlights, f.width, f.height);
+        f.sources.forEach((source, index) => {
+          atlases[index] = load(source, f.width * f.columns, f.height * Math.ceil(f.perSheet / f.columns));
         });
-        video.muted = true; video.defaultMuted = true;
-        video.playsInline = true; video.loop = false; video.preload = 'auto';
-        try { video.src = source; video.load(); } catch (_) { finish(false); }
       });
       return preparing;
     };
@@ -382,11 +332,7 @@
     };
     const destroy = () => {
       if (stopped) return;
-      stopped = true; playAttempt++; resume = false;
-      cancelWork(); listeners.forEach((remove) => remove());
-      releaseAtlases();
-      video.pause(); video.removeAttribute('src');
-      try { video.load(); } catch (_) { /* The static final poster remains available. */ }
+      stopped = true; cancelWork(); listeners.forEach((remove) => remove()); releaseImages();
     };
     return { prepare, play, destroy };
   }

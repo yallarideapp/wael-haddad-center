@@ -154,7 +154,6 @@ html[dir=ltr] .hero{background-image:radial-gradient(ellipse 58% 55% at 68% 52%,
 .hero-car .rs5-poster{position:relative;width:100%;height:100%;max-width:none;display:block;transform:none;opacity:1}
 .rs5-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;transform:none;opacity:1}
 .rs5-smoke{position:absolute;left:0;top:-40%;width:100%;height:140%;display:block;pointer-events:none}
-.rs5-source{position:absolute;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none}
 .hero-car.hood-loading{opacity:0}
 .hero-car[data-frame=video] .rs5-poster{visibility:hidden}
 .hero-car[data-frame=poster] .rs5-canvas{visibility:hidden}
